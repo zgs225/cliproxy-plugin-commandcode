@@ -203,7 +203,12 @@ const QuotaPageHTML = `<!DOCTYPE html>
       letter-spacing: 0.3px;
     }
 
-    :root[data-theme="dark"] .plan-tag,
+    :root[data-theme="dark"] .plan-tag {
+      background: linear-gradient(135deg, rgba(167, 139, 250, 0.2), rgba(96, 165, 250, 0.2));
+      color: #c084fc;
+      border-color: rgba(167, 139, 250, 0.45);
+    }
+
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]):not([data-theme="white"]) .plan-tag {
         background: linear-gradient(135deg, rgba(167, 139, 250, 0.2), rgba(96, 165, 250, 0.2));
@@ -658,7 +663,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
         <div>
           <div class="brand-title">
             Command Code 配额
-            <span class="version-tag">v0.1.0</span>
+            <span class="version-tag">v0.2.0</span>
             <span id="planBadge" class="plan-tag" style="display:none;">Plan: -</span>
           </div>
           <div class="brand-subtitle">CLIProxyAPI 实时限额与 Credits 用量监控</div>
