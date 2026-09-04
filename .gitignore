@@ -1,0 +1,17 @@
+# Binaries & Shared Libraries
+*.dylib
+*.so
+*.dll
+*.h
+*.exe
+*.test
+
+# Go workspace & coverage
+coverage.txt
+*.out
+
+# OS & IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
