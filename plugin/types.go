@@ -225,6 +225,7 @@ type UpstreamCreditsResponse struct {
 
 // UpstreamWindowLimits carries fiveHour and weekly window metrics.
 type UpstreamWindowLimits struct {
+	Limited  *bool               `json:"limited,omitempty"`
 	FiveHour UpstreamWindowLimit `json:"fiveHour"`
 	Weekly   UpstreamWindowLimit `json:"weekly"`
 }
@@ -274,8 +275,15 @@ type UsageWindowLimitsData struct {
 	Weekly   UsageWindowLimitData `json:"weekly"`
 }
 
+// PlanInfo represents inferred Command Code subscription plan details.
+type PlanInfo struct {
+	Name string `json:"name"`
+	Code string `json:"code"`
+}
+
 // FormattedUsageData is the complete formatted usage payload.
 type FormattedUsageData struct {
+	Plan         PlanInfo              `json:"plan"`
 	Credits      UsageCreditsData      `json:"credits"`
 	WindowLimits UsageWindowLimitsData `json:"window_limits"`
 	UpdatedAt    string                `json:"updated_at"`
@@ -284,6 +292,7 @@ type FormattedUsageData struct {
 // FormattedUsageResponse is returned by GET /plugins/commandcode/usage and POST /plugins/commandcode/usage.
 type FormattedUsageResponse struct {
 	OK           bool                  `json:"ok"`
+	Plan         PlanInfo              `json:"plan"`
 	Data         FormattedUsageData    `json:"data"`
 	Credits      UsageCreditsData      `json:"credits"`
 	WindowLimits UsageWindowLimitsData `json:"window_limits"`

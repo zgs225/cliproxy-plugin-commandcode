@@ -37,8 +37,9 @@ const QuotaPageHTML = `<!DOCTYPE html>
       --radius-lg: 16px;
     }
 
+    /* Auto mode fallback: when no explicit data-theme is set, follow OS dark preference */
     @media (prefers-color-scheme: dark) {
-      :root {
+      :root:not([data-theme="light"]):not([data-theme="white"]) {
         --bg-page: #0b0f19;
         --bg-card: #151d30;
         --bg-subtle: #1e293b;
@@ -59,6 +60,53 @@ const QuotaPageHTML = `<!DOCTYPE html>
         --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
         --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
       }
+    }
+
+    /* Explicit dark theme from Management Center */
+    :root[data-theme="dark"] {
+      --bg-page: #0b0f19;
+      --bg-card: #151d30;
+      --bg-subtle: #1e293b;
+      --border-color: #334155;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --primary: #60a5fa;
+      --primary-hover: #3b82f6;
+      --primary-subtle: rgba(59, 130, 246, 0.12);
+      --success: #34d399;
+      --success-subtle: rgba(16, 185, 129, 0.12);
+      --warning: #fbbf24;
+      --warning-subtle: rgba(245, 158, 11, 0.12);
+      --danger: #f87171;
+      --danger-subtle: rgba(239, 68, 68, 0.12);
+      --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
+      --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
+    }
+
+    /* Explicit white / light theme from Management Center: overrides OS dark preference */
+    :root[data-theme="white"],
+    :root[data-theme="light"] {
+      --bg-page: #f8fafc;
+      --bg-card: #ffffff;
+      --bg-subtle: #f1f5f9;
+      --border-color: #e2e8f0;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --text-dim: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --primary-subtle: #eff6ff;
+      --success: #10b981;
+      --success-subtle: #ecfdf5;
+      --warning: #f59e0b;
+      --warning-subtle: #fffbeb;
+      --danger: #ef4444;
+      --danger-subtle: #fef2f2;
+      --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+      --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
     }
 
     * {
@@ -139,6 +187,29 @@ const QuotaPageHTML = `<!DOCTYPE html>
       background: var(--primary-subtle);
       color: var(--primary);
       border: 1px solid var(--primary);
+    }
+
+    .plan-tag {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 10px;
+      border-radius: 9999px;
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(59, 130, 246, 0.15));
+      color: #8b5cf6;
+      border: 1px solid rgba(139, 92, 246, 0.35);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      letter-spacing: 0.3px;
+    }
+
+    :root[data-theme="dark"] .plan-tag,
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]):not([data-theme="white"]) .plan-tag {
+        background: linear-gradient(135deg, rgba(167, 139, 250, 0.2), rgba(96, 165, 250, 0.2));
+        color: #c084fc;
+        border-color: rgba(167, 139, 250, 0.45);
+      }
     }
 
     .brand-subtitle {
@@ -588,6 +659,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
           <div class="brand-title">
             Command Code 配额
             <span class="version-tag">v0.1.0</span>
+            <span id="planBadge" class="plan-tag" style="display:none;">Plan: -</span>
           </div>
           <div class="brand-subtitle">CLIProxyAPI 实时限额与 Credits 用量监控</div>
         </div>
@@ -796,6 +868,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
       const alertMsg = document.getElementById("alertMsg");
       const statusBadge = document.getElementById("statusBadge");
       const statusText = document.getElementById("statusText");
+      const planBadge = document.getElementById("planBadge");
 
       const valMonthlyCredits = document.getElementById("valMonthlyCredits");
       const valOpensourceCredits = document.getElementById("valOpensourceCredits");
@@ -897,6 +970,16 @@ const QuotaPageHTML = `<!DOCTYPE html>
         hideAlert();
         const credits = data.credits || (data.data && data.data.credits) || {};
         const limits = data.window_limits || (data.data && data.data.window_limits) || {};
+
+        // Plan
+        const plan = data.plan || (data.data && data.data.plan);
+        if (plan) {
+          const planName = plan.name || (typeof plan === "string" ? plan : "Unknown");
+          planBadge.textContent = "Plan: " + planName;
+          planBadge.style.display = "inline-flex";
+        } else {
+          planBadge.style.display = "none";
+        }
 
         // Credits
         valMonthlyCredits.textContent = formatNumber(credits.monthly_credits);
@@ -1061,6 +1144,71 @@ const QuotaPageHTML = `<!DOCTYPE html>
       if (initKey) {
         inputMgmtKey.value = initKey;
       }
+
+      function syncTheme() {
+        let themeSetting = null;
+
+        // 1. Try reading from parent window (if same-origin iframe)
+        try {
+          if (window.parent && window.parent !== window && window.parent.document) {
+            const parentTheme = window.parent.document.documentElement.getAttribute("data-theme");
+            if (parentTheme) {
+              themeSetting = parentTheme;
+            }
+          }
+        } catch (e) {}
+
+        // 2. Try reading from localStorage['cli-proxy-theme']
+        if (!themeSetting) {
+          try {
+            const stored = localStorage.getItem("cli-proxy-theme");
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              if (parsed && parsed.state) {
+                if (parsed.state.theme) {
+                  themeSetting = parsed.state.theme;
+                }
+                if (parsed.state.resolvedTheme && themeSetting === "auto") {
+                  themeSetting = parsed.state.resolvedTheme;
+                }
+              }
+            }
+          } catch (e) {}
+        }
+
+        // 3. Fallback to own html attribute
+        if (!themeSetting) {
+          themeSetting = document.documentElement.getAttribute("data-theme");
+        }
+
+        // Apply theme to documentElement
+        const docEl = document.documentElement;
+        if (themeSetting === "dark") {
+          docEl.setAttribute("data-theme", "dark");
+        } else if (themeSetting === "white" || themeSetting === "light") {
+          docEl.setAttribute("data-theme", themeSetting);
+        } else {
+          // auto or unset: check system preference
+          const isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          if (isDark) {
+            docEl.setAttribute("data-theme", "dark");
+          } else {
+            docEl.setAttribute("data-theme", "light");
+          }
+        }
+      }
+
+      // Initialize theme and sync listeners
+      syncTheme();
+      window.addEventListener("storage", (e) => {
+        if (e.key === "cli-proxy-theme") {
+          syncTheme();
+        }
+      });
+      if (window.matchMedia) {
+        window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", syncTheme);
+      }
+      setInterval(syncTheme, 2000);
 
       if (!timerInterval) {
         timerInterval = setInterval(updateTimers, 1000);

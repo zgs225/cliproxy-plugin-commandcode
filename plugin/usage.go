@@ -163,8 +163,12 @@ func ParseAndFormatUsage(raw []byte, summary *UpstreamUsageSummaryResponse, now 
 	windowLimitsData := formatWindowLimits(upstream.WindowLimits, now)
 	windowLimitsData.Monthly = formatMonthlyWindow(upstream.Credits, summary, now)
 
+	// Inferred subscription plan
+	planInfo := PlanFromWindowLimits(upstream.WindowLimits.FiveHour.Cap, upstream.WindowLimits.Weekly.Cap, upstream.WindowLimits.Limited)
+
 	nowRFC := now.Format(time.RFC3339)
 	data := FormattedUsageData{
+		Plan:         planInfo,
 		Credits:      creditsData,
 		WindowLimits: windowLimitsData,
 		UpdatedAt:    nowRFC,
@@ -172,11 +176,75 @@ func ParseAndFormatUsage(raw []byte, summary *UpstreamUsageSummaryResponse, now 
 
 	return &FormattedUsageResponse{
 		OK:           true,
+		Plan:         planInfo,
 		Data:         data,
 		Credits:      creditsData,
 		WindowLimits: windowLimitsData,
 		UpdatedAt:    nowRFC,
 	}, nil
+}
+
+// PlanFromWindowLimits infers the Command Code subscription plan based on window limit caps.
+//
+// Rules:
+//   - windowLimits.limited == false -> Provider plan (pay-as-you-go)
+//   - 5h cap=14 && weekly cap=35 -> GOAT plan
+//   - 5h cap=16 && weekly cap=40 -> Pro plan
+//   - 5h cap=90 && weekly cap=180 -> Max 20× plan
+//   - 5h cap=45 && weekly cap=90 -> Max 10× plan
+//   - 5h cap=3 && weekly cap=6 -> Go plan
+//   - Otherwise -> Unknown
+func PlanFromWindowLimits(fiveHourCap, weeklyCap float64, limited *bool) PlanInfo {
+	if limited != nil && !*limited {
+		return PlanInfo{
+			Name: "Provider",
+			Code: "provider",
+		}
+	}
+
+	match := func(capVal, target float64) bool {
+		return math.Abs(capVal-target) < 0.01
+	}
+
+	if match(fiveHourCap, 14) && match(weeklyCap, 35) {
+		return PlanInfo{
+			Name: "GOAT",
+			Code: "goat",
+		}
+	}
+
+	if match(fiveHourCap, 16) && match(weeklyCap, 40) {
+		return PlanInfo{
+			Name: "Pro",
+			Code: "pro",
+		}
+	}
+
+	if match(fiveHourCap, 90) && match(weeklyCap, 180) {
+		return PlanInfo{
+			Name: "Max 20×",
+			Code: "max_20x",
+		}
+	}
+
+	if match(fiveHourCap, 45) && match(weeklyCap, 90) {
+		return PlanInfo{
+			Name: "Max 10×",
+			Code: "max_10x",
+		}
+	}
+
+	if match(fiveHourCap, 3) && match(weeklyCap, 6) {
+		return PlanInfo{
+			Name: "Go",
+			Code: "go",
+		}
+	}
+
+	return PlanInfo{
+		Name: "Unknown",
+		Code: "unknown",
+	}
 }
 
 func formatCredits(credits map[string]any) UsageCreditsData {

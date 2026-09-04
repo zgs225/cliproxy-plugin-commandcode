@@ -174,6 +174,27 @@ func TestParseAndFormatUsage(t *testing.T) {
 	if weekly.ResetAt != "2025-03-10T12:00:00Z" {
 		t.Errorf("Weekly ResetAt = %v, want 2025-03-10T12:00:00Z", weekly.ResetAt)
 	}
+
+	// Verify inferred plan (cap 25 / 100 is unknown)
+	if usage.Plan.Name != "Unknown" || usage.Plan.Code != "unknown" {
+		t.Errorf("Plan = %+v, want Unknown", usage.Plan)
+	}
+
+	// Verify plan inference for GOAT
+	rawGOAT := []byte(`{
+		"credits": {"monthlyCredits": 100},
+		"windowLimits": {
+			"fiveHour": {"used": 2, "cap": 14},
+			"weekly": {"used": 10, "cap": 35}
+		}
+	}`)
+	usageGOAT, errGOAT := ParseAndFormatUsage(rawGOAT, nil, now)
+	if errGOAT != nil {
+		t.Fatalf("ParseAndFormatUsage GOAT error: %v", errGOAT)
+	}
+	if usageGOAT.Plan.Name != "GOAT" || usageGOAT.Plan.Code != "goat" {
+		t.Errorf("GOAT Plan = %+v, want name=GOAT code=goat", usageGOAT.Plan)
+	}
 }
 
 func TestFetchCreditsRaw_FallbackHTTP(t *testing.T) {
@@ -256,5 +277,102 @@ func TestFetchCreditsRaw_HostCaller(t *testing.T) {
 	}
 	if string(body) != string(mockResponsePayload) {
 		t.Errorf("body = %s, want %s", string(body), string(mockResponsePayload))
+	}
+}
+
+func TestPlanFromWindowLimits(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name        string
+		fiveHourCap float64
+		weeklyCap   float64
+		limited     *bool
+		wantName    string
+		wantCode    string
+	}{
+		{
+			name:        "GOAT plan",
+			fiveHourCap: 14,
+			weeklyCap:   35,
+			limited:     &trueVal,
+			wantName:    "GOAT",
+			wantCode:    "goat",
+		},
+		{
+			name:        "Pro plan",
+			fiveHourCap: 16,
+			weeklyCap:   40,
+			limited:     nil,
+			wantName:    "Pro",
+			wantCode:    "pro",
+		},
+		{
+			name:        "Max 20x plan",
+			fiveHourCap: 90,
+			weeklyCap:   180,
+			limited:     &trueVal,
+			wantName:    "Max 20×",
+			wantCode:    "max_20x",
+		},
+		{
+			name:        "Max 10x plan",
+			fiveHourCap: 45,
+			weeklyCap:   90,
+			limited:     nil,
+			wantName:    "Max 10×",
+			wantCode:    "max_10x",
+		},
+		{
+			name:        "Go plan",
+			fiveHourCap: 3,
+			weeklyCap:   6,
+			limited:     nil,
+			wantName:    "Go",
+			wantCode:    "go",
+		},
+		{
+			name:        "Provider pay-as-you-go plan",
+			fiveHourCap: 0,
+			weeklyCap:   0,
+			limited:     &falseVal,
+			wantName:    "Provider",
+			wantCode:    "provider",
+		},
+		{
+			name:        "Provider plan with caps set but limited=false",
+			fiveHourCap: 14,
+			weeklyCap:   35,
+			limited:     &falseVal,
+			wantName:    "Provider",
+			wantCode:    "provider",
+		},
+		{
+			name:        "Float tolerance test",
+			fiveHourCap: 13.999,
+			weeklyCap:   35.001,
+			limited:     nil,
+			wantName:    "GOAT",
+			wantCode:    "goat",
+		},
+		{
+			name:        "Unknown caps",
+			fiveHourCap: 10,
+			weeklyCap:   20,
+			limited:     nil,
+			wantName:    "Unknown",
+			wantCode:    "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := PlanFromWindowLimits(tt.fiveHourCap, tt.weeklyCap, tt.limited)
+			if got.Name != tt.wantName || got.Code != tt.wantCode {
+				t.Errorf("PlanFromWindowLimits(%v, %v, %v) = %+v, want name=%q code=%q",
+					tt.fiveHourCap, tt.weeklyCap, tt.limited, got, tt.wantName, tt.wantCode)
+			}
+		})
 	}
 }
