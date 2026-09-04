@@ -256,8 +256,20 @@ type UsageWindowLimitData struct {
 	ResetInSeconds int64   `json:"reset_in_seconds"`
 }
 
+// UpstreamUsageSummaryResponse reflects Command Code's /internal/usage/summary payload,
+// which aggregates usage over the current billing period (monthly).
+type UpstreamUsageSummaryResponse struct {
+	TotalCount            int64   `json:"totalCount"`
+	TotalCost             float64 `json:"totalCost"`
+	TotalCredits          float64 `json:"totalCredits"`
+	TotalMonthlyCredits   float64 `json:"totalMonthlyCredits"`
+	TotalPurchasedCredits float64 `json:"totalPurchasedCredits"`
+	PeriodBasis           string  `json:"periodBasis"`
+}
+
 // UsageWindowLimitsData contains both windows.
 type UsageWindowLimitsData struct {
+	Monthly  UsageWindowLimitData `json:"monthly"`
 	FiveHour UsageWindowLimitData `json:"five_hour"`
 	Weekly   UsageWindowLimitData `json:"weekly"`
 }

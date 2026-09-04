@@ -42,8 +42,9 @@ func SetDefaultHTTPClient(client HTTPDoer) {
 	}
 }
 
-// FetchCreditsRaw fetches raw upstream credit data via host.http.do or net/http fallback.
-func FetchCreditsRaw(ctx context.Context, apiBase, sessionToken string, hostCallbackID string) ([]byte, int, error) {
+// fetchUpstream performs a GET on an internal Command Code endpoint, reusing
+// the host.http.do bridge when available, else falling back to net/http.
+func fetchUpstream(ctx context.Context, apiBase, endpoint, sessionToken, hostCallbackID string) ([]byte, int, error) {
 	cleanToken := ExtractSessionToken(sessionToken)
 	if cleanToken == "" {
 		return nil, http.StatusBadRequest, errors.New("missing session_token: please provide a valid Command Code session token")
@@ -52,7 +53,7 @@ func FetchCreditsRaw(ctx context.Context, apiBase, sessionToken string, hostCall
 	if apiBase == "" {
 		apiBase = DefaultAPIBase
 	}
-	url := fmt.Sprintf("%s/internal/billing/credits", strings.TrimRight(apiBase, "/"))
+	url := fmt.Sprintf("%s/%s", strings.TrimRight(apiBase, "/"), strings.TrimLeft(endpoint, "/"))
 	cookieValue := FormatSessionCookie(cleanToken)
 
 	// 1. Try host.http.do if hostCaller is configured
@@ -120,8 +121,19 @@ func FetchCreditsRaw(ctx context.Context, apiBase, sessionToken string, hostCall
 	return body, res.StatusCode, nil
 }
 
+// FetchCreditsRaw fetches raw upstream credit data via host.http.do or net/http fallback.
+func FetchCreditsRaw(ctx context.Context, apiBase, sessionToken string, hostCallbackID string) ([]byte, int, error) {
+	return fetchUpstream(ctx, apiBase, "internal/billing/credits", sessionToken, hostCallbackID)
+}
+
+// FetchUsageSummaryRaw fetches the billing-period (monthly) usage totals.
+func FetchUsageSummaryRaw(ctx context.Context, apiBase, sessionToken string, hostCallbackID string) ([]byte, int, error) {
+	return fetchUpstream(ctx, apiBase, "internal/usage/summary", sessionToken, hostCallbackID)
+}
+
 // ParseAndFormatUsage parses upstream credits JSON into structured usage metrics.
-func ParseAndFormatUsage(raw []byte, now time.Time) (*FormattedUsageResponse, error) {
+// summary (optional) carries the billing-period usage totals used to derive the monthly window.
+func ParseAndFormatUsage(raw []byte, summary *UpstreamUsageSummaryResponse, now time.Time) (*FormattedUsageResponse, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("empty response body from upstream")
 	}
@@ -149,6 +161,7 @@ func ParseAndFormatUsage(raw []byte, now time.Time) (*FormattedUsageResponse, er
 
 	// Format window limits
 	windowLimitsData := formatWindowLimits(upstream.WindowLimits, now)
+	windowLimitsData.Monthly = formatMonthlyWindow(upstream.Credits, summary, now)
 
 	nowRFC := now.Format(time.RFC3339)
 	data := FormattedUsageData{
@@ -186,6 +199,41 @@ func formatWindowLimits(upstream UpstreamWindowLimits, now time.Time) UsageWindo
 		FiveHour: formatSingleWindow(upstream.FiveHour, now),
 		Weekly:   formatSingleWindow(upstream.Weekly, now),
 	}
+}
+
+// formatMonthlyWindow derives the monthly (billing period) window from the
+// billing/credits response (remaining monthlyCredits) and the
+// /internal/usage/summary response (totalMonthlyCredits consumed this period).
+// cap = consumed + remaining, used = consumed, remaining = monthlyCredits.
+// Returns a zero window when the summary (consumed totals) is unavailable,
+// because a monthly window cannot be derived from remaining credits alone.
+func formatMonthlyWindow(credits map[string]any, summary *UpstreamUsageSummaryResponse, now time.Time) UsageWindowLimitData {
+	out := UsageWindowLimitData{}
+	if summary == nil || summary.TotalMonthlyCredits <= 0 {
+		return out
+	}
+
+	remaining := getFloatFromMap(credits, "monthlyCredits", "monthly_credits")
+	used := summary.TotalMonthlyCredits
+
+	capTotal := used + remaining
+	if capTotal > 0 {
+		percentage := (used / capTotal) * 100.0
+		if percentage > 100.0 {
+			percentage = 100.0
+		}
+		out.Percentage = math.Round(percentage*100) / 100
+	}
+
+	out.Used = used
+	out.Cap = capTotal
+	out.Remaining = remaining
+	if out.Remaining < 0 {
+		out.Remaining = 0
+	}
+	out.ResetAt = ""  // 账单周期重置时间上游未提供
+	out.ResetInSeconds = 0
+	return out
 }
 
 func formatSingleWindow(w UpstreamWindowLimit, now time.Time) UsageWindowLimitData {

@@ -182,7 +182,16 @@ func executeUsageQuery(ctx context.Context, apiBase, sessionToken, hostCallbackI
 		}, nil
 	}
 
-	usage, errParse := ParseAndFormatUsage(raw, time.Now().UTC())
+	// Fetch billing-period (monthly) usage totals; non-fatal if unavailable.
+	var summary *UpstreamUsageSummaryResponse
+	if sumRaw, sumStatus, sumErr := FetchUsageSummaryRaw(ctx, apiBase, sessionToken, hostCallbackID); sumErr == nil && sumStatus == http.StatusOK {
+		var parsed UpstreamUsageSummaryResponse
+		if errSum := json.Unmarshal(sumRaw, &parsed); errSum == nil && parsed.TotalMonthlyCredits > 0 {
+			summary = &parsed
+		}
+	}
+
+	usage, errParse := ParseAndFormatUsage(raw, summary, time.Now().UTC())
 	if errParse != nil {
 		resBytes, _ := json.Marshal(map[string]any{
 			"ok":    false,

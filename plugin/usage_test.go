@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -81,7 +82,44 @@ func TestParseAndFormatUsage(t *testing.T) {
 	}`)
 
 	now := time.Date(2025, 3, 4, 12, 0, 0, 0, time.UTC)
-	usage, err := ParseAndFormatUsage(raw, now)
+
+	t.Run("without summary monthly defaults empty", func(t *testing.T) {
+		usage, err := ParseAndFormatUsage(raw, nil, now)
+		if err != nil {
+			t.Fatalf("ParseAndFormatUsage error: %v", err)
+		}
+		if !usage.OK {
+			t.Fatal("expected OK=true")
+		}
+		if usage.WindowLimits.Monthly.Used != 0 || usage.WindowLimits.Monthly.Cap != 0 {
+			t.Errorf("expected empty monthly without summary, got %+v", usage.WindowLimits.Monthly)
+		}
+	})
+
+	t.Run("monthly window derived from summary + remaining credits", func(t *testing.T) {
+		summary := &UpstreamUsageSummaryResponse{TotalMonthlyCredits: 30.0}
+		// monthlyCredits in raw = 1000 remaining, so cap = 1030
+		usage, err := ParseAndFormatUsage(raw, summary, now)
+		if err != nil {
+			t.Fatalf("ParseAndFormatUsage error: %v", err)
+		}
+		m := usage.WindowLimits.Monthly
+		if m.Used != 30.0 {
+			t.Errorf("monthly used = %v, want 30", m.Used)
+		}
+		if m.Cap != 1030.0 {
+			t.Errorf("monthly cap = %v, want 1030", m.Cap)
+		}
+		if m.Remaining != 1000.0 {
+			t.Errorf("monthly remaining = %v, want 1000", m.Remaining)
+		}
+		wantPct := math.Round((30.0/1030.0)*10000) / 100
+		if m.Percentage != wantPct {
+			t.Errorf("monthly percentage = %v, want %v", m.Percentage, wantPct)
+		}
+	})
+
+	usage, err := ParseAndFormatUsage(raw, nil, now)
 	if err != nil {
 		t.Fatalf("ParseAndFormatUsage error: %v", err)
 	}
@@ -174,7 +212,7 @@ func TestFetchCreditsRaw_FallbackHTTP(t *testing.T) {
 		t.Fatal("expected non-empty body")
 	}
 
-	usage, errParse := ParseAndFormatUsage(body, time.Time{})
+	usage, errParse := ParseAndFormatUsage(body, nil, time.Time{})
 	if errParse != nil {
 		t.Fatalf("ParseAndFormatUsage error: %v", errParse)
 	}

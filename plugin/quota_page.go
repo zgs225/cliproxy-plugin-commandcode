@@ -676,6 +676,37 @@ const QuotaPageHTML = `<!DOCTYPE html>
 
     <!-- Double Window Limits -->
     <div class="quota-section">
+      <!-- Monthly Window -->
+      <div id="cardMonthly" class="quota-card">
+        <div class="quota-card-header">
+          <div>
+            <span class="quota-tag" style="color:#f59e0b; background:rgba(245,158,11,0.12)">账单周期</span>
+            <div class="quota-name">月度额度 (Monthly Window)</div>
+          </div>
+          <div id="badgeMonthly" class="quota-percent-badge">- %</div>
+        </div>
+
+        <div class="quota-stats-row">
+          <div>
+            <span id="usedMonthly" class="quota-usage-num">-</span>
+            <span id="capMonthly" class="quota-cap-num">/ -</span>
+          </div>
+          <div>剩余可用: <strong id="remainMonthly">-</strong></div>
+        </div>
+
+        <div class="progress-track">
+          <div id="barMonthly" class="progress-bar"></div>
+        </div>
+
+        <div class="reset-box">
+          <div class="reset-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <span>账单周期重置</span>
+          </div>
+          <div id="timerMonthly" class="countdown-timer">--:--:--</div>
+        </div>
+      </div>
+
       <!-- 5-Hour Window -->
       <div id="cardFiveHour" class="quota-card">
         <div class="quota-card-header">
@@ -770,6 +801,14 @@ const QuotaPageHTML = `<!DOCTYPE html>
       const valOpensourceCredits = document.getElementById("valOpensourceCredits");
       const valTotalCredits = document.getElementById("valTotalCredits");
 
+      const cardMonthly = document.getElementById("cardMonthly");
+      const badgeMonthly = document.getElementById("badgeMonthly");
+      const usedMonthly = document.getElementById("usedMonthly");
+      const capMonthly = document.getElementById("capMonthly");
+      const remainMonthly = document.getElementById("remainMonthly");
+      const barMonthly = document.getElementById("barMonthly");
+      const timerMonthly = document.getElementById("timerMonthly");
+
       const cardFiveHour = document.getElementById("cardFiveHour");
       const badgeFiveHour = document.getElementById("badgeFiveHour");
       const usedFiveHour = document.getElementById("usedFiveHour");
@@ -787,6 +826,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
       const timerWeekly = document.getElementById("timerWeekly");
       const lastUpdated = document.getElementById("lastUpdated");
 
+      let monthlyTargetTime = null;
       let fiveHourTargetTime = null;
       let weeklyTargetTime = null;
       let timerInterval = null;
@@ -842,6 +882,9 @@ const QuotaPageHTML = `<!DOCTYPE html>
       }
 
       function updateTimers() {
+        if (monthlyTargetTime) {
+          timerMonthly.textContent = formatCountdown(monthlyTargetTime);
+        }
         if (fiveHourTargetTime) {
           timerFiveHour.textContent = formatCountdown(fiveHourTargetTime);
         }
@@ -859,6 +902,20 @@ const QuotaPageHTML = `<!DOCTYPE html>
         valMonthlyCredits.textContent = formatNumber(credits.monthly_credits);
         valOpensourceCredits.textContent = formatNumber(credits.opensource_monthly_credits);
         valTotalCredits.textContent = formatNumber(credits.total_credits);
+
+        // Monthly (billing period)
+        const monthly = limits.monthly || {};
+        const pMonth = Math.min(100, Math.max(0, monthly.percentage || 0));
+        badgeMonthly.textContent = pMonth.toFixed(1) + "%";
+        usedMonthly.textContent = formatNumber(monthly.used);
+        capMonthly.textContent = "/ " + formatNumber(monthly.cap);
+        remainMonthly.textContent = formatNumber(monthly.remaining);
+        barMonthly.style.width = pMonth + "%";
+
+        barMonthly.className = "progress-bar" + (pMonth >= 90 || monthly.exceeded ? " danger" : pMonth >= 70 ? " warning" : "");
+        cardMonthly.className = "quota-card" + (monthly.exceeded ? " is-exceeded" : "");
+        monthlyTargetTime = null;
+        timerMonthly.textContent = "账单周期";
 
         // Five Hour
         const fiveHour = limits.five_hour || {};
@@ -901,10 +958,10 @@ const QuotaPageHTML = `<!DOCTYPE html>
         }
 
         // Overall Status
-        if (fiveHour.exceeded || weekly.exceeded) {
+        if (fiveHour.exceeded || weekly.exceeded || monthly.exceeded) {
           statusBadge.className = "status-badge exceeded";
           statusText.textContent = "已达限额 (Exceeded)";
-        } else if (pFive >= 80 || pWeek >= 80) {
+        } else if (pFive >= 80 || pWeek >= 80 || pMonth >= 80) {
           statusBadge.className = "status-badge warning";
           statusText.textContent = "配额紧张 (Warning)";
         } else {
