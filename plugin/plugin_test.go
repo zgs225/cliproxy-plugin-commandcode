@@ -39,8 +39,8 @@ api_base: "https://custom-api.commandcode.ai"
 	if reg.Metadata.Version != PluginVersion {
 		t.Errorf("Metadata.Version = %q, want %q", reg.Metadata.Version, PluginVersion)
 	}
-	if !reg.Capabilities.AuthProvider {
-		t.Errorf("Capabilities.AuthProvider = false, want true")
+	if reg.Capabilities.AuthProvider {
+		t.Errorf("Capabilities.AuthProvider = true, want false")
 	}
 	if !reg.Capabilities.ManagementAPI {
 		t.Errorf("Capabilities.ManagementAPI = false, want true")
@@ -84,7 +84,7 @@ session_token: "new-token-abc"
 	}
 }
 
-func TestPluginAuthIdentifier(t *testing.T) {
+func TestPluginAuthIdentifier_NotHandled(t *testing.T) {
 	p := NewPlugin()
 	raw, err := p.HandleMethod("auth.identifier", nil)
 	if err != nil {
@@ -92,16 +92,14 @@ func TestPluginAuthIdentifier(t *testing.T) {
 	}
 
 	var env Envelope
-	if err := json.Unmarshal(raw, &env); err != nil || !env.OK {
+	if err := json.Unmarshal(raw, &env); err != nil {
 		t.Fatalf("envelope error: %+v", env)
 	}
-
-	var idResp IdentifierResponse
-	if err := json.Unmarshal(env.Result, &idResp); err != nil {
-		t.Fatalf("unmarshal idResp error: %v", err)
+	if env.OK {
+		t.Fatal("expected env.OK=false for auth.identifier")
 	}
-	if idResp.Identifier != PluginID {
-		t.Errorf("Identifier = %q, want %q", idResp.Identifier, PluginID)
+	if env.Error == nil || env.Error.Code != "unknown_method" {
+		t.Errorf("Error = %+v, want code=unknown_method", env.Error)
 	}
 }
 

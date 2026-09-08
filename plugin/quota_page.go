@@ -663,7 +663,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
         <div>
           <div class="brand-title">
             Command Code 配额
-            <span class="version-tag">v0.2.0</span>
+            <span class="version-tag">v0.2.1</span>
             <span id="planBadge" class="plan-tag" style="display:none;">Plan: -</span>
           </div>
           <div class="brand-subtitle">CLIProxyAPI 实时限额与 Credits 用量监控</div>

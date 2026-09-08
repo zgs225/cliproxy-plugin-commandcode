@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -14,7 +13,7 @@ import (
 const (
 	PluginID       = "commandcode"
 	PluginName     = "commandcode"
-	PluginVersion  = "0.1.0"
+	PluginVersion  = "0.2.1"
 	PluginAuthor   = "zgs225"
 	PluginRepo     = "https://github.com/zgs225/cliproxy-plugin-commandcode"
 	PluginLogo     = "https://raw.githubusercontent.com/zgs225/cliproxy-plugin-commandcode/main/assets/logo.svg"
@@ -113,17 +112,6 @@ func (p *Plugin) HandleMethod(method string, requestBytes []byte) ([]byte, error
 	case "plugin.quiesce", "plugin.shutdown":
 		return OkEnvelope(map[string]any{"shutdown": true})
 
-	case "auth.identifier":
-		return OkEnvelope(IdentifierResponse{Identifier: PluginID})
-	case "auth.parse":
-		return p.handleAuthParse(requestBytes)
-	case "auth.login.start":
-		return p.handleAuthLoginStart()
-	case "auth.login.poll":
-		return p.handleAuthLoginPoll()
-	case "auth.refresh":
-		return p.handleAuthRefresh(requestBytes)
-
 	case "management.register":
 		return p.handleManagementRegister()
 	case "management.handle":
@@ -163,7 +151,6 @@ func (p *Plugin) handleRegister(raw []byte) ([]byte, error) {
 			},
 		},
 		Capabilities: RegistrationCapability{
-			AuthProvider:  true,
 			ManagementAPI: true,
 		},
 	})
@@ -177,67 +164,6 @@ func (p *Plugin) handleReconfigure(raw []byte) ([]byte, error) {
 		}
 	}
 	return p.handleRegister(raw)
-}
-
-func (p *Plugin) handleAuthParse(raw []byte) ([]byte, error) {
-	var req AuthParseRequest
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &req); err != nil {
-			return ErrorEnvelope("invalid_request", "failed to parse AuthParseRequest: "+err.Error()), nil
-		}
-	}
-
-	resp, err := ParseAuth(req)
-	if err != nil {
-		return ErrorEnvelope("auth_parse_error", err.Error()), nil
-	}
-
-	// Cache token in config if config doesn't have one yet
-	if resp.Handled && resp.Auth.Metadata != nil {
-		if tok, ok := resp.Auth.Metadata["session_token"].(string); ok && tok != "" {
-			if p.config.GetSessionToken() == "" {
-				p.config.SetSessionToken(tok)
-			}
-		}
-	}
-
-	return OkEnvelope(resp)
-}
-
-func (p *Plugin) handleAuthLoginStart() ([]byte, error) {
-	return OkEnvelope(map[string]any{
-		"Provider":  PluginID,
-		"URL":       "https://commandcode.ai",
-		"State":     "manual",
-		"ExpiresAt": time.Now().Add(5 * time.Minute).UTC(),
-	})
-}
-
-func (p *Plugin) handleAuthLoginPoll() ([]byte, error) {
-	return OkEnvelope(map[string]any{
-		"Status":  "error",
-		"Message": "Command Code interactive login is not supported; please configure session_token or provide a commandcode-*.json credential file",
-	})
-}
-
-func (p *Plugin) handleAuthRefresh(raw []byte) ([]byte, error) {
-	var req AuthRefreshRequest
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &req)
-	}
-
-	authData := AuthData{
-		Provider:         PluginID,
-		ID:               req.AuthID,
-		StorageJSON:      req.StorageJSON,
-		Metadata:         req.Metadata,
-		Attributes:       req.Attributes,
-		NextRefreshAfter: time.Now().Add(24 * time.Hour).UTC(),
-	}
-	return OkEnvelope(AuthRefreshResponse{
-		Auth:             authData,
-		NextRefreshAfter: authData.NextRefreshAfter,
-	})
 }
 
 func (p *Plugin) handleManagementRegister() ([]byte, error) {

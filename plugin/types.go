@@ -55,59 +55,8 @@ type ConfigField struct {
 
 // RegistrationCapability declares the capabilities implemented by this plugin.
 type RegistrationCapability struct {
-	AuthProvider  bool `json:"auth_provider"`
-	ManagementAPI bool `json:"management_api"`
-}
-
-// IdentifierResponse is returned by auth.identifier.
-type IdentifierResponse struct {
-	Identifier string `json:"identifier"`
-}
-
-// AuthData describes a credential record.
-type AuthData struct {
-	Provider         string            `json:"Provider"`
-	ID               string            `json:"ID"`
-	FileName         string            `json:"FileName"`
-	Label            string            `json:"Label"`
-	Prefix           string            `json:"Prefix,omitempty"`
-	ProxyURL         string            `json:"ProxyURL,omitempty"`
-	Disabled         bool              `json:"Disabled,omitempty"`
-	StorageJSON      []byte            `json:"StorageJSON"`
-	Metadata         map[string]any    `json:"Metadata,omitempty"`
-	Attributes       map[string]string `json:"Attributes,omitempty"`
-	NextRefreshAfter time.Time         `json:"NextRefreshAfter,omitempty"`
-}
-
-// AuthParseRequest is passed to auth.parse.
-type AuthParseRequest struct {
-	Provider string         `json:"Provider"`
-	Path     string         `json:"Path"`
-	FileName string         `json:"FileName"`
-	RawJSON  []byte         `json:"RawJSON"`
-	Host     map[string]any `json:"Host,omitempty"`
-}
-
-// AuthParseResponse is returned by auth.parse.
-type AuthParseResponse struct {
-	Handled bool       `json:"Handled"`
-	Auth    AuthData   `json:"Auth"`
-	Auths   []AuthData `json:"Auths,omitempty"`
-}
-
-// AuthRefreshRequest is passed to auth.refresh.
-type AuthRefreshRequest struct {
-	AuthID       string            `json:"AuthID"`
-	AuthProvider string            `json:"AuthProvider"`
-	StorageJSON  []byte            `json:"StorageJSON"`
-	Metadata     map[string]any    `json:"Metadata,omitempty"`
-	Attributes   map[string]string `json:"Attributes,omitempty"`
-}
-
-// AuthRefreshResponse is returned by auth.refresh.
-type AuthRefreshResponse struct {
-	Auth             AuthData  `json:"Auth"`
-	NextRefreshAfter time.Time `json:"NextRefreshAfter,omitempty"`
+	AuthProvider  bool `json:"auth_provider,omitempty"`
+	ManagementAPI bool `json:"management_api,omitempty"`
 }
 
 // ManagementRegistrationResponse is returned by management.register.

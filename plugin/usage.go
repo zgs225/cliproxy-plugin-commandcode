@@ -64,7 +64,7 @@ func fetchUpstream(ctx context.Context, apiBase, endpoint, sessionToken, hostCal
 			Headers: map[string][]string{
 				"Cookie":     {cookieValue},
 				"Accept":     {"application/json"},
-				"User-Agent": {"cliproxy-plugin-commandcode/0.1.0"},
+				"User-Agent": {fmt.Sprintf("cliproxy-plugin-commandcode/%s", PluginVersion)},
 			},
 			HostCallbackID: hostCallbackID,
 		}
@@ -103,7 +103,7 @@ func fetchUpstream(ctx context.Context, apiBase, endpoint, sessionToken, hostCal
 	}
 	httpReq.Header.Set("Cookie", cookieValue)
 	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("User-Agent", "cliproxy-plugin-commandcode/0.1.0")
+	httpReq.Header.Set("User-Agent", fmt.Sprintf("cliproxy-plugin-commandcode/%s", PluginVersion))
 
 	res, errDo := defaultHTTPClient.Do(httpReq)
 	if errDo != nil {

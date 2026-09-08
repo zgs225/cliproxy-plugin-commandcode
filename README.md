@@ -4,7 +4,7 @@
 [![CLIProxyAPI Plugin ABI](https://img.shields.io/badge/C%20ABI-v1-emerald.svg)](https://help.router-for.me/plugin/development.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 动态 C ABI 插件，用于提供 **Command Code** 凭据认证、上游配额与窗口限额查询、以及嵌入式配额监控仪表盘卡片（QuotaCard）。
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 动态 C ABI 插件，用于提供 **Command Code** 上游配额与窗口限额查询、以及嵌入式配额监控仪表盘卡片（QuotaCard）。
 
 ---
 
@@ -16,7 +16,6 @@
   - [构建插件](#构建插件)
   - [安装与目录结构](#安装与目录结构)
   - [宿主配置 (`config.yaml`)](#宿主配置-configyaml)
-  - [凭据文件配置](#凭据文件配置)
 - [管理端点与资源页](#管理端点与资源页)
   - [1. 浏览器资源页 (`QuotaCard`)](#1-浏览器资源页-quotacard)
   - [2. 管理 API: 查询用量 (`GET`)](#2-管理-api-查询用量-get)
@@ -32,12 +31,12 @@
 1. **标准 C ABI 兼容**：
    - 导出 `cliproxy_plugin_init`、`cliproxyPluginCall`、`cliproxyPluginFree`、`cliproxyPluginShutdown`。
    - 遵照 CLIProxyAPI 官方 JSON Envelope 规范（`ok`, `result`, `error`）。
-2. **双核心能力声明**：
-   - `auth_provider`: 参与凭据识别、加载、解析与刷新。
-   - `management_api`: 注册插件自有的管理端点与浏览器资源页面。
-3. **凭据自动解析 (`auth.parse`)**：
-   - 自动识别 `commandcode-*.json` 凭据文件、`type: "commandcode"` 配置或包含 `session_token` / Cookie 的凭据。
-   - 提取并规范化 `__Secure-commandcode_prod_.session_token`，存入宿主持久化凭据库。
+2. **纯粹的管理监控能力 (`management_api`)**：
+   - 注册插件自有的用量管理端点与浏览器嵌入式仪表盘资源页面。
+   - 无多余的 OAuth 提供商注册，不污染 CLIProxyAPI 后台的 OAuth 授权列表。
+3. **Session Token 灵活提取与支持**：
+   - 支持在 `config.yaml` 配置或在配额页面上直接输入。
+   - 支持纯 token 或完整 Cookie 字符串（自动提取 `__Secure-commandcode_prod_.session_token`）。
 4. **精确用量与双滑动窗口限额解析**：
    - 上游接口：`GET https://api.commandcode.ai/internal/billing/credits`。
    - 请求优先走宿主提供的 `host.http.do` 回调（复用宿主代理、日志与鉴权管道），离线或未注入宿主时自动无缝降级至 Go 标准 `net/http`。
@@ -55,16 +54,15 @@
 ┌────────────────────────────────────────────────────────┐
 │                      CLIProxyAPI                       │
 │                                                        │
-│  ┌─────────────────────────┐  ┌─────────────────────┐  │
-│  │   Auth Management       │  │  Management Center  │  │
-│  │  (reads auths/*.json)   │  │   (/v0/management)  │  │
-│  └───────────┬─────────────┘  └──────────┬──────────┘  │
-│              │ C ABI                     │ C ABI       │
-│              ▼                           ▼             │
+│                       ┌─────────────────────┐          │
+│                       │  Management Center  │          │
+│                       │   (/v0/management)  │          │
+│                       └──────────┬──────────┘          │
+│                                  │ C ABI               │
+│                                  ▼                     │
 │  ┌──────────────────────────────────────────────────┐  │
 │  │       cliproxy-plugin-commandcode.dylib/.so      │  │
 │  │                                                  │  │
-│  │  • auth.identifier / auth.parse                 │  │
 │  │  • management.register / management.handle       │  │
 │  │  • Usage Parser & Window Limits Formatter        │  │
 │  │  • Embedded Single-file HTML/CSS/JS QuotaCard    │  │
@@ -126,33 +124,9 @@ plugins:
     commandcode:
       enabled: true
       priority: 1
-      session_token: "YOUR_COMMANDCODE_SESSION_TOKEN"
+      session_token: "YOUR_COMMANDCODE_SESSION_TOKEN" # 支持纯 token 或完整 Cookie 字符串
       api_base: "https://api.commandcode.ai" # 可选，默认为官方接口
 ```
-
-### 凭据文件配置
-
-除了在 `config.yaml` 中全局配置，你也可以在 CLIProxyAPI 的 `auths/` 凭据目录下创建凭据文件（如 `auths/commandcode-main.json`）：
-
-```json
-{
-  "type": "commandcode",
-  "session_token": "YOUR_COMMANDCODE_SESSION_TOKEN",
-  "email": "user@example.com",
-  "label": "Command Code Pro"
-}
-```
-
-或者直接放入浏览器 Cookie：
-
-```json
-{
-  "type": "commandcode",
-  "cookie": "__Secure-commandcode_prod_.session_token=YOUR_COMMANDCODE_SESSION_TOKEN; Path=/;"
-}
-```
-
-插件的 `auth.parse` 会自动拦截并完成凭据加载。
 
 ---
 
