@@ -663,7 +663,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
         <div>
           <div class="brand-title">
             Command Code 配额
-            <span class="version-tag">v0.2.1</span>
+            <span class="version-tag">v0.2.2</span>
             <span id="planBadge" class="plan-tag" style="display:none;">Plan: -</span>
           </div>
           <div class="brand-subtitle">CLIProxyAPI 实时限额与 Credits 用量监控</div>
@@ -932,9 +932,15 @@ const QuotaPageHTML = `<!DOCTYPE html>
         alertBox.className = "alert";
       }
 
-      function formatNumber(num) {
-        if (num === null || num === undefined || isNaN(num)) return "0";
-        return Number(num).toLocaleString(undefined, { maximumFractionDigits: 2 });
+      // Command Code 额度按美元(USD)计价：金额统一加 $ 前缀，按美元格式输出（千分位 + 两位小数）
+      function formatUSD(num) {
+        if (num === null || num === undefined || isNaN(num)) return "$0.00";
+        return Number(num).toLocaleString("en-US", {
+          style: "currency",
+          currency: "USD",
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        });
       }
 
       function formatCountdown(targetDate) {
@@ -987,17 +993,17 @@ const QuotaPageHTML = `<!DOCTYPE html>
         }
 
         // Credits
-        valMonthlyCredits.textContent = formatNumber(credits.monthly_credits);
-        valOpensourceCredits.textContent = formatNumber(credits.opensource_monthly_credits);
-        valTotalCredits.textContent = formatNumber(credits.total_credits);
+        valMonthlyCredits.textContent = formatUSD(credits.monthly_credits);
+        valOpensourceCredits.textContent = formatUSD(credits.opensource_monthly_credits);
+        valTotalCredits.textContent = formatUSD(credits.total_credits);
 
         // Monthly (billing period)
         const monthly = limits.monthly || {};
         const pMonth = Math.min(100, Math.max(0, monthly.percentage || 0));
         badgeMonthly.textContent = pMonth.toFixed(1) + "%";
-        usedMonthly.textContent = formatNumber(monthly.used);
-        capMonthly.textContent = "/ " + formatNumber(monthly.cap);
-        remainMonthly.textContent = formatNumber(monthly.remaining);
+        usedMonthly.textContent = formatUSD(monthly.used);
+        capMonthly.textContent = "/ " + formatUSD(monthly.cap);
+        remainMonthly.textContent = formatUSD(monthly.remaining);
         barMonthly.style.width = pMonth + "%";
 
         barMonthly.className = "progress-bar" + (pMonth >= 90 || monthly.exceeded ? " danger" : pMonth >= 70 ? " warning" : "");
@@ -1009,9 +1015,9 @@ const QuotaPageHTML = `<!DOCTYPE html>
         const fiveHour = limits.five_hour || {};
         const pFive = Math.min(100, Math.max(0, fiveHour.percentage || 0));
         badgeFiveHour.textContent = pFive.toFixed(1) + "%";
-        usedFiveHour.textContent = formatNumber(fiveHour.used);
-        capFiveHour.textContent = "/ " + formatNumber(fiveHour.cap);
-        remainFiveHour.textContent = formatNumber(fiveHour.remaining);
+        usedFiveHour.textContent = formatUSD(fiveHour.used);
+        capFiveHour.textContent = "/ " + formatUSD(fiveHour.cap);
+        remainFiveHour.textContent = formatUSD(fiveHour.remaining);
         barFiveHour.style.width = pFive + "%";
 
         barFiveHour.className = "progress-bar" + (pFive >= 90 || fiveHour.exceeded ? " danger" : pFive >= 70 ? " warning" : "");
@@ -1029,9 +1035,9 @@ const QuotaPageHTML = `<!DOCTYPE html>
         const weekly = limits.weekly || {};
         const pWeek = Math.min(100, Math.max(0, weekly.percentage || 0));
         badgeWeekly.textContent = pWeek.toFixed(1) + "%";
-        usedWeekly.textContent = formatNumber(weekly.used);
-        capWeekly.textContent = "/ " + formatNumber(weekly.cap);
-        remainWeekly.textContent = formatNumber(weekly.remaining);
+        usedWeekly.textContent = formatUSD(weekly.used);
+        capWeekly.textContent = "/ " + formatUSD(weekly.cap);
+        remainWeekly.textContent = formatUSD(weekly.remaining);
         barWeekly.style.width = pWeek + "%";
 
         barWeekly.className = "progress-bar" + (pWeek >= 90 || weekly.exceeded ? " danger" : pWeek >= 70 ? " warning" : "");

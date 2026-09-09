@@ -1,0 +1,1 @@
+7830fab0eb763247602fd4815549a13eeb25841afbe2d3a047d25b9f4b9cf86d  commandcode_0.2.2_linux_amd64.zip
