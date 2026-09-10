@@ -15,3 +15,8 @@ coverage.txt
 .idea/
 .vscode/
 *.swp
+
+# Release artifacts (attached to GitHub Releases, not tracked in git)
+*.zip
+checksums.txt
+dist/
