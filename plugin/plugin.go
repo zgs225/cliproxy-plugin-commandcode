@@ -13,7 +13,7 @@ import (
 const (
 	PluginID       = "commandcode"
 	PluginName     = "commandcode"
-	PluginVersion  = "0.2.2"
+	PluginVersion  = "0.3.0"
 	PluginAuthor   = "zgs225"
 	PluginRepo     = "https://github.com/zgs225/cliproxy-plugin-commandcode"
 	PluginLogo     = "https://raw.githubusercontent.com/zgs225/cliproxy-plugin-commandcode/main/assets/logo.svg"
@@ -22,9 +22,11 @@ const (
 
 // PluginConfig holds the runtime configuration parsed from YAML.
 type PluginConfig struct {
-	mu           sync.RWMutex
-	SessionToken string `yaml:"session_token" json:"session_token"`
-	APIBase      string `yaml:"api_base" json:"api_base"`
+	mu              sync.RWMutex
+	SessionToken    string `yaml:"session_token" json:"session_token"`
+	APIBase         string `yaml:"api_base" json:"api_base"`
+	OpenCodeAPIKey  string `yaml:"opencode_api_key" json:"opencode_api_key"`
+	OpenCodeAPIBase string `yaml:"opencode_api_base" json:"opencode_api_base"`
 }
 
 // UpdateFromYAML updates the configuration from raw YAML bytes.
@@ -33,8 +35,10 @@ func (c *PluginConfig) UpdateFromYAML(raw []byte) error {
 		return nil
 	}
 	var tmp struct {
-		SessionToken string `yaml:"session_token"`
-		APIBase      string `yaml:"api_base"`
+		SessionToken    string `yaml:"session_token"`
+		APIBase         string `yaml:"api_base"`
+		OpenCodeAPIKey  string `yaml:"opencode_api_key"`
+		OpenCodeAPIBase string `yaml:"opencode_api_base"`
 	}
 	if err := yaml.Unmarshal(raw, &tmp); err != nil {
 		return fmt.Errorf("unmarshal config_yaml: %w", err)
@@ -48,6 +52,14 @@ func (c *PluginConfig) UpdateFromYAML(raw []byte) error {
 	}
 	if tmp.APIBase != "" {
 		c.APIBase = strings.TrimRight(tmp.APIBase, "/")
+	}
+	if tmp.OpenCodeAPIKey != "" {
+		// OpenCode API key is a plain Bearer token; do not run it through
+		// ExtractSessionToken (that is Command Code cookie specific).
+		c.OpenCodeAPIKey = strings.TrimSpace(tmp.OpenCodeAPIKey)
+	}
+	if tmp.OpenCodeAPIBase != "" {
+		c.OpenCodeAPIBase = strings.TrimRight(tmp.OpenCodeAPIBase, "/")
 	}
 	if c.APIBase == "" {
 		c.APIBase = DefaultAPIBase
@@ -77,6 +89,24 @@ func (c *PluginConfig) GetAPIBase() string {
 		return DefaultAPIBase
 	}
 	return c.APIBase
+}
+
+// GetOpenCodeAPIKey safely returns the OpenCode Go API key.
+func (c *PluginConfig) GetOpenCodeAPIKey() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.OpenCodeAPIKey
+}
+
+// GetOpenCodeAPIBase safely returns the OpenCode Go API base URL,
+// falling back to DefaultOpenCodeAPIBase when unset.
+func (c *PluginConfig) GetOpenCodeAPIBase() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.OpenCodeAPIBase == "" {
+		return DefaultOpenCodeAPIBase
+	}
+	return c.OpenCodeAPIBase
 }
 
 // Plugin encapsulates the Command Code plugin instance.
@@ -147,6 +177,16 @@ func (p *Plugin) handleRegister(raw []byte) ([]byte, error) {
 					Name:        "api_base",
 					Type:        "string",
 					Description: "Command Code API base URL (default: https://api.commandcode.ai)",
+				},
+				{
+					Name:        "opencode_api_key",
+					Type:        "string",
+					Description: "OpenCode Go API key (Bearer token used for https://opencode.ai/zen/go/v1/usage)",
+				},
+				{
+					Name:        "opencode_api_base",
+					Type:        "string",
+					Description: "OpenCode Go API base URL (default: https://opencode.ai/zen/go/v1)",
 				},
 			},
 		},

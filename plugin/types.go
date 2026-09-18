@@ -248,3 +248,60 @@ type FormattedUsageResponse struct {
 	UpdatedAt    string                `json:"updated_at"`
 	Error        string                `json:"error,omitempty"`
 }
+
+// OpenCodeUsageResponse reflects GET {opencode_api_base}/usage from OpenCode Go.
+type OpenCodeUsageResponse struct {
+	Usage OpenCodeUsageWindows `json:"usage"`
+}
+
+// OpenCodeUsageWindows carries the three usage windows returned by OpenCode Go.
+type OpenCodeUsageWindows struct {
+	Rolling OpenCodeUsageWindow `json:"rolling"`
+	Weekly  OpenCodeUsageWindow `json:"weekly"`
+	Monthly OpenCodeUsageWindow `json:"monthly"`
+}
+
+// OpenCodeUsageWindow represents one quota window from OpenCode Go.
+// Percent is int in the observed upstream payload but parsed as float64 for tolerance.
+type OpenCodeUsageWindow struct {
+	Status   string  `json:"status"`
+	Percent  float64 `json:"percent"`
+	ResetsAt string  `json:"resetsAt"` // RFC3339 UTC
+}
+
+// OpenCodeFormattedWindows is the formatted OpenCode Go window section.
+type OpenCodeFormattedWindows struct {
+	Rolling OpenCodeFormattedWindow `json:"rolling"`
+	Weekly  OpenCodeFormattedWindow `json:"weekly"`
+	Monthly OpenCodeFormattedWindow `json:"monthly"`
+}
+
+// OpenCodeFormattedWindow is one formatted OpenCode Go window.
+type OpenCodeFormattedWindow struct {
+	Status         string  `json:"status"`
+	Percent        float64 `json:"percent"`
+	Exceeded       bool    `json:"exceeded"`
+	ResetAt        string  `json:"reset_at"`
+	ResetInSeconds int64   `json:"reset_in_seconds"`
+}
+
+// OpenCodeFormattedUsageResponse is the formatted OpenCode Go usage payload.
+type OpenCodeFormattedUsageResponse struct {
+	OK        bool                     `json:"ok"`
+	Provider  string                   `json:"provider"` // "opencode_go"
+	Windows   OpenCodeFormattedWindows `json:"windows"`
+	UpdatedAt string                   `json:"updated_at"`
+	Error     string                   `json:"error,omitempty"`
+}
+
+// AllUsageResponse aggregates both providers for /plugins/commandcode/all.
+// Partial failure semantics: each provider's payload is present only on success;
+// failures are reported in Errors. CommandCode/OpenCode carry the raw JSON of the
+// respective FormattedUsageResponse / OpenCodeFormattedUsageResponse.
+type AllUsageResponse struct {
+	OK          bool              `json:"ok"` // at least one provider succeeded
+	CommandCode json.RawMessage   `json:"commandcode,omitempty"`
+	OpenCode    json.RawMessage   `json:"opencode,omitempty"`
+	Errors      map[string]string `json:"errors,omitempty"`
+	UpdatedAt   string            `json:"updated_at"`
+}

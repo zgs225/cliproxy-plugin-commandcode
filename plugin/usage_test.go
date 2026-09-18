@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -374,5 +375,314 @@ func TestPlanFromWindowLimits(t *testing.T) {
 					tt.fiveHourCap, tt.weeklyCap, tt.limited, got, tt.wantName, tt.wantCode)
 			}
 		})
+	}
+}
+
+func TestParseOpenCodeUsage(t *testing.T) {
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+
+	t.Run("normal payload from real upstream shape", func(t *testing.T) {
+		raw := []byte(`{"usage":{
+			"rolling": {"status":"ok","percent":4, "resetsAt":"2026-09-17T06:58:53.171Z"},
+			"weekly":  {"status":"ok","percent":46,"resetsAt":"2026-09-21T00:00:00.000Z"},
+			"monthly": {"status":"ok","percent":23,"resetsAt":"2026-10-14T09:13:49.000Z"}
+		}}`)
+
+		usage, err := ParseOpenCodeUsage(raw, now)
+		if err != nil {
+			t.Fatalf("ParseOpenCodeUsage error: %v", err)
+		}
+		if !usage.OK || usage.Provider != "opencode_go" {
+			t.Fatalf("unexpected header: ok=%v provider=%q", usage.OK, usage.Provider)
+		}
+		if usage.UpdatedAt != "2026-09-16T12:00:00Z" {
+			t.Errorf("UpdatedAt = %q", usage.UpdatedAt)
+		}
+
+		rolling := usage.Windows.Rolling
+		if rolling.Percent != 4 || rolling.Status != "ok" || rolling.Exceeded {
+			t.Errorf("rolling = %+v", rolling)
+		}
+		if rolling.ResetAt != "2026-09-17T06:58:53Z" {
+			t.Errorf("rolling reset_at = %q", rolling.ResetAt)
+		}
+		if rolling.ResetInSeconds != 68333 {
+			t.Errorf("rolling reset_in_seconds = %d, want 68333", rolling.ResetInSeconds)
+		}
+
+		weekly := usage.Windows.Weekly
+		if weekly.Percent != 46 {
+			t.Errorf("weekly percent = %v, want 46", weekly.Percent)
+		}
+		if weekly.ResetAt != "2026-09-21T00:00:00Z" {
+			t.Errorf("weekly reset_at = %q, want 2026-09-21T00:00:00Z (.000Z tolerated)", weekly.ResetAt)
+		}
+
+		monthly := usage.Windows.Monthly
+		if monthly.Percent != 23 {
+			t.Errorf("monthly percent = %v, want 23", monthly.Percent)
+		}
+	})
+
+	t.Run("float percent", func(t *testing.T) {
+		raw := []byte(`{"usage":{"rolling":{"status":"ok","percent":12.345,"resetsAt":"2026-09-17T06:58:53Z"}}}`)
+		usage, err := ParseOpenCodeUsage(raw, now)
+		if err != nil {
+			t.Fatalf("ParseOpenCodeUsage error: %v", err)
+		}
+		if got := usage.Windows.Rolling.Percent; got != 12.35 { // Round(x*100)/100
+			t.Errorf("percent = %v, want 12.35", got)
+		}
+	})
+
+	t.Run("unknown status tolerated", func(t *testing.T) {
+		raw := []byte(`{"usage":{"rolling":{"status":"weird-status","percent":50,"resetsAt":"2026-09-17T06:58:53Z"}}}`)
+		usage, err := ParseOpenCodeUsage(raw, now)
+		if err != nil {
+			t.Fatalf("ParseOpenCodeUsage error: %v", err)
+		}
+		if got := usage.Windows.Rolling; got.Status != "weird-status" || got.Exceeded {
+			t.Errorf("rolling = %+v, want status kept and not exceeded", got)
+		}
+	})
+
+	t.Run("exceeded status", func(t *testing.T) {
+		raw := []byte(`{"usage":{"rolling":{"status":"exceeded","percent":99,"resetsAt":"2026-09-17T06:58:53Z"}}}`)
+		usage, err := ParseOpenCodeUsage(raw, now)
+		if err != nil {
+			t.Fatalf("ParseOpenCodeUsage error: %v", err)
+		}
+		if !usage.Windows.Rolling.Exceeded {
+			t.Error("expected Exceeded=true for status=exceeded")
+		}
+	})
+
+	t.Run("percent 100 exceeded", func(t *testing.T) {
+		raw := []byte(`{"usage":{"rolling":{"status":"ok","percent":100,"resetsAt":""}}}`)
+		usage, err := ParseOpenCodeUsage(raw, now)
+		if err != nil {
+			t.Fatalf("ParseOpenCodeUsage error: %v", err)
+		}
+		if !usage.Windows.Rolling.Exceeded {
+			t.Error("expected Exceeded=true for percent=100")
+		}
+		if usage.Windows.Rolling.ResetAt != "" || usage.Windows.Rolling.ResetInSeconds != 0 {
+			t.Errorf("expected empty reset fields, got %+v", usage.Windows.Rolling)
+		}
+	})
+
+	t.Run("percent above 100 clamped", func(t *testing.T) {
+		raw := []byte(`{"usage":{"rolling":{"status":"ok","percent":150.5,"resetsAt":""}}}`)
+		usage, err := ParseOpenCodeUsage(raw, now)
+		if err != nil {
+			t.Fatalf("ParseOpenCodeUsage error: %v", err)
+		}
+		if got := usage.Windows.Rolling.Percent; got != 100 {
+			t.Errorf("percent = %v, want 100 (clamped)", got)
+		}
+		if !usage.Windows.Rolling.Exceeded {
+			t.Error("expected Exceeded=true when clamped to 100")
+		}
+	})
+
+	t.Run("malformed resetsAt not fatal", func(t *testing.T) {
+		raw := []byte(`{"usage":{"rolling":{"status":"ok","percent":5,"resetsAt":"not-a-timestamp"}}}`)
+		usage, err := ParseOpenCodeUsage(raw, now)
+		if err != nil {
+			t.Fatalf("ParseOpenCodeUsage must not fail on bad resetsAt: %v", err)
+		}
+		if got := usage.Windows.Rolling; got.ResetAt != "" || got.ResetInSeconds != 0 {
+			t.Errorf("expected zero reset fields on parse failure, got %+v", got)
+		}
+	})
+
+	t.Run("missing windows tolerated as zero values", func(t *testing.T) {
+		raw := []byte(`{"usage":{}}`)
+		usage, err := ParseOpenCodeUsage(raw, now)
+		if err != nil {
+			t.Fatalf("ParseOpenCodeUsage error: %v", err)
+		}
+		if usage.Windows.Rolling.Percent != 0 {
+			t.Errorf("rolling percent = %v, want 0", usage.Windows.Rolling.Percent)
+		}
+	})
+
+	t.Run("empty body", func(t *testing.T) {
+		if _, err := ParseOpenCodeUsage(nil, now); err == nil {
+			t.Fatal("expected error for empty body")
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		if _, err := ParseOpenCodeUsage([]byte(`not-json`), now); err == nil {
+			t.Fatal("expected error for invalid JSON")
+		}
+	})
+}
+
+func TestFetchOpenCodeUsageRaw_FallbackHTTP(t *testing.T) {
+	var sawAuth, sawUA, sawAccept string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/usage" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		sawAuth = r.Header.Get("Authorization")
+		sawUA = r.Header.Get("User-Agent")
+		sawAccept = r.Header.Get("Accept")
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"usage":{"rolling":{"status":"ok","percent":4,"resetsAt":"2026-09-17T06:58:53.171Z"}}}`))
+	}))
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	body, status, err := FetchOpenCodeUsageRaw(context.Background(), ts.URL, "sk-test-key", "")
+	if err != nil {
+		t.Fatalf("FetchOpenCodeUsageRaw error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200", status)
+	}
+	if len(body) == 0 {
+		t.Fatal("expected non-empty body")
+	}
+	if sawAuth != "Bearer sk-test-key" {
+		t.Errorf("Authorization = %q, want Bearer sk-test-key", sawAuth)
+	}
+	if sawAccept != "application/json" {
+		t.Errorf("Accept = %q, want application/json", sawAccept)
+	}
+	if !strings.Contains(sawUA, "cliproxy-plugin-commandcode/") {
+		t.Errorf("User-Agent = %q, want cliproxy-plugin-commandcode/<version>", sawUA)
+	}
+
+	usage, errParse := ParseOpenCodeUsage(body, time.Time{})
+	if errParse != nil {
+		t.Fatalf("ParseOpenCodeUsage error: %v", errParse)
+	}
+	if usage.Windows.Rolling.Percent != 4 {
+		t.Errorf("rolling percent = %v, want 4", usage.Windows.Rolling.Percent)
+	}
+}
+
+func TestFetchOpenCodeUsageRaw_BaseTrailingSlash(t *testing.T) {
+	requests := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/usage" {
+			t.Errorf("path = %q, want /usage (trailing slash trimmed)", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"usage":{"rolling":{"status":"ok","percent":1,"resetsAt":""}}}`))
+	}))
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	if _, _, err := FetchOpenCodeUsageRaw(context.Background(), ts.URL+"/", "sk-key", ""); err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
+func TestFetchOpenCodeUsageRaw_MissingKey(t *testing.T) {
+	_, status, err := FetchOpenCodeUsageRaw(context.Background(), "", "", "")
+	if err == nil {
+		t.Fatal("expected error for missing key")
+	}
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+func TestFetchOpenCodeUsageRaw_EmptyKeyAfterTrim(t *testing.T) {
+	_, status, err := FetchOpenCodeUsageRaw(context.Background(), "", "   ", "")
+	if err == nil {
+		t.Fatal("expected error for whitespace-only key")
+	}
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+func TestFetchOpenCodeUsageRaw_UpstreamNon200(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid api key"}`))
+	}))
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	body, status, err := FetchOpenCodeUsageRaw(context.Background(), ts.URL, "sk-bad", "")
+	if err != nil {
+		t.Fatalf("expected nil transport error for non-200 upstream, got %v", err)
+	}
+	if status != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", status)
+	}
+	if string(body) != `{"error":"invalid api key"}` {
+		t.Errorf("body = %q", string(body))
+	}
+}
+
+func TestFetchOpenCodeUsageRaw_HostCaller(t *testing.T) {
+	mockResponsePayload := []byte(`{"usage":{"rolling":{"status":"ok","percent":7,"resetsAt":"2026-09-17T06:58:53Z"}}}`)
+
+	var sawMethod, sawURL string
+	var sawHeaders map[string][]string
+	SetHostCaller(func(method string, payload []byte) ([]byte, error) {
+		if method != "host.http.do" {
+			t.Errorf("method = %s, want host.http.do", method)
+		}
+		var req HostHTTPRequest
+		if err := json.Unmarshal(payload, &req); err != nil {
+			t.Fatalf("unmarshal HostHTTPRequest error: %v", err)
+		}
+		sawMethod, sawURL, sawHeaders = req.Method, req.URL, req.Headers
+		hostResp := HostHTTPResponse{
+			StatusCode: http.StatusOK,
+			Body:       mockResponsePayload,
+		}
+		respJSON, _ := json.Marshal(hostResp)
+		return json.Marshal(Envelope{OK: true, Result: respJSON})
+	})
+	defer SetHostCaller(nil)
+
+	body, status, err := FetchOpenCodeUsageRaw(context.Background(), "https://opencode.example/v1", "sk-host-key", "cb-123")
+	if err != nil {
+		t.Fatalf("FetchOpenCodeUsageRaw with hostCaller error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200", status)
+	}
+	if string(body) != string(mockResponsePayload) {
+		t.Errorf("body = %s, want %s", string(body), string(mockResponsePayload))
+	}
+	if sawMethod != http.MethodGet {
+		t.Errorf("host request method = %s, want GET", sawMethod)
+	}
+	if sawURL != "https://opencode.example/v1/usage" {
+		t.Errorf("host request url = %s, want https://opencode.example/v1/usage", sawURL)
+	}
+	auth := sawHeaders["Authorization"]
+	if len(auth) == 0 || auth[0] != "Bearer sk-host-key" {
+		t.Errorf("host request Authorization = %v, want Bearer sk-host-key", auth)
 	}
 }

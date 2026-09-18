@@ -47,15 +47,15 @@ api_base: "https://custom-api.commandcode.ai"
 	}
 
 	// Verify config fields
-	if len(reg.Metadata.ConfigFields) != 2 {
-		t.Fatalf("ConfigFields len = %d, want 2", len(reg.Metadata.ConfigFields))
+	if len(reg.Metadata.ConfigFields) != 4 {
+		t.Fatalf("ConfigFields len = %d, want 4", len(reg.Metadata.ConfigFields))
 	}
 	fieldNames := map[string]bool{}
 	for _, f := range reg.Metadata.ConfigFields {
 		fieldNames[f.Name] = true
 	}
-	if !fieldNames["session_token"] || !fieldNames["api_base"] {
-		t.Errorf("ConfigFields missing session_token or api_base: %+v", reg.Metadata.ConfigFields)
+	if !fieldNames["session_token"] || !fieldNames["api_base"] || !fieldNames["opencode_api_key"] || !fieldNames["opencode_api_base"] {
+		t.Errorf("ConfigFields missing expected fields: %+v", reg.Metadata.ConfigFields)
 	}
 
 	// Verify config parsed
@@ -65,7 +65,6 @@ api_base: "https://custom-api.commandcode.ai"
 	if p.config.GetAPIBase() != "https://custom-api.commandcode.ai" {
 		t.Errorf("APIBase = %q, want https://custom-api.commandcode.ai", p.config.GetAPIBase())
 	}
-
 	// Test plugin.reconfigure
 	reconfYAML := []byte(`
 session_token: "new-token-abc"
@@ -133,5 +132,41 @@ func TestEnvelopeError(t *testing.T) {
 	}
 	if env.Error.Code != "test_code" || env.Error.Message != "test error message" {
 		t.Errorf("env.Error = %+v", env.Error)
+	}
+}
+
+func TestPluginConfig_OpenCode(t *testing.T) {
+	p := NewPlugin()
+	configYAML := []byte("opencode_api_key: \" sk-opencode-123 \"\nopencode_api_base: \"https://custom.oc.example/v1/\"\n")
+	lifecycleReq, _ := json.Marshal(LifecycleRequest{ConfigYAML: configYAML})
+
+	if _, err := p.HandleMethod("plugin.register", lifecycleReq); err != nil {
+		t.Fatalf("handleMethod(plugin.register) error: %v", err)
+	}
+
+	if got := p.config.GetOpenCodeAPIKey(); got != "sk-opencode-123" {
+		t.Errorf("OpenCodeAPIKey = %q, want sk-opencode-123", got)
+	}
+	if got := p.config.GetOpenCodeAPIBase(); got != "https://custom.oc.example/v1" {
+		t.Errorf("OpenCodeAPIBase = %q, want https://custom.oc.example/v1 (trailing slash trimmed)", got)
+	}
+
+	// A Command Code cookie string must NOT be run through ExtractSessionToken.
+	cookieLike := []byte("opencode_api_key: \"sk-raw-bearer-value\"\n")
+	req2, _ := json.Marshal(LifecycleRequest{ConfigYAML: cookieLike})
+	if _, err := p.HandleMethod("plugin.reconfigure", req2); err != nil {
+		t.Fatalf("handleMethod(plugin.reconfigure) error: %v", err)
+	}
+	if got := p.config.GetOpenCodeAPIKey(); got != "sk-raw-bearer-value" {
+		t.Errorf("OpenCodeAPIKey = %q, want sk-raw-bearer-value (raw, no cookie extraction)", got)
+	}
+
+	// Empty config falls back to the default base.
+	empty := NewPlugin()
+	if got := empty.config.GetOpenCodeAPIBase(); got != DefaultOpenCodeAPIBase {
+		t.Errorf("default OpenCodeAPIBase = %q, want %q", got, DefaultOpenCodeAPIBase)
+	}
+	if got := empty.config.GetOpenCodeAPIKey(); got != "" {
+		t.Errorf("default OpenCodeAPIKey = %q, want empty", got)
 	}
 }

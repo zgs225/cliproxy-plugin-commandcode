@@ -20,3 +20,6 @@ coverage.txt
 *.zip
 checksums.txt
 dist/
+
+# Internal planning docs (not for public repo)
+docs/

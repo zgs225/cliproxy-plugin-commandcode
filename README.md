@@ -4,7 +4,7 @@
 [![CLIProxyAPI Plugin ABI](https://img.shields.io/badge/C%20ABI-v1-emerald.svg)](https://help.router-for.me/plugin/development.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 动态 C ABI 插件，用于提供 **Command Code** 上游配额与窗口限额查询、以及嵌入式配额监控仪表盘卡片（QuotaCard）。
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 动态 C ABI 插件，用于提供 **Command Code** 与 **OpenCode Go** 两个上游的配额与窗口限额查询、以及嵌入式配额监控仪表盘卡片（QuotaCard，Tab: Command Code / OpenCode Go / All）。
 
 ---
 
@@ -20,6 +20,8 @@
   - [1. 浏览器资源页 (`QuotaCard`)](#1-浏览器资源页-quotacard)
   - [2. 管理 API: 查询用量 (`GET`)](#2-管理-api-查询用量-get)
   - [3. 管理 API: 测试用量 (`POST`)](#3-管理-api-测试用量-post)
+  - [4. 管理 API: OpenCode Go 用量 (`opencode/usage`)](#4-管理-api-opencode-go-用量-opencodeusage)
+  - [5. 管理 API: 聚合查询 (`all`)](#5-管理-api-聚合查询-all)
 - [用量数据结构说明](#用量数据结构说明)
 - [开发与测试](#开发与测试)
 - [许可证](#许可证)
@@ -45,6 +47,11 @@
    - 页面挂载于 `/v0/resource/plugins/commandcode/quota`。
    - 零外部 CDN 依赖，纯内置 HTML + CSS + JS，深色/浅色模式自适应。
    - 具有进度条颜色变化、5小时/周限额卡片、秒级动态重置倒计时、同源 `localStorage` 鉴权与一键刷新。
+   - Tab 切换：Command Code / OpenCode Go / All（`#opencode` / `#all` hash 记忆状态）。
+6. **OpenCode Go 用量查询 (v0.3.0+)**：
+   - 上游接口：`GET https://opencode.ai/zen/go/v1/usage`，`Authorization: Bearer` 认证（同样走 `host.http.do` 优先 + `net/http` 兜底）。
+   - 解析 rolling（5h）/ weekly / monthly 三个窗口的 `status`/`percent`/`resetsAt`，容忍未知 status 值。
+   - 聚合端点 `/plugins/commandcode/all` 一次返回两个 provider，部分失败不拖死另一 provider。
 
 ---
 
@@ -76,7 +83,8 @@
 └──────────────────────────────┼─────────────────────────┘
                                │ Upstream HTTPS
                                ▼
-        https://api.commandcode.ai/internal/billing/credits
+  https://api.commandcode.ai/internal/billing/credits
+  https://opencode.ai/zen/go/v1/usage        (v0.3.0+)
 ```
 
 ---
@@ -126,6 +134,8 @@ plugins:
       priority: 1
       session_token: "YOUR_COMMANDCODE_SESSION_TOKEN" # 支持纯 token 或完整 Cookie 字符串
       api_base: "https://api.commandcode.ai" # 可选，默认为官方接口
+      opencode_api_key: "sk-YOUR_OPENCODE_GO_API_KEY" # v0.3.0+ 可选，OpenCode Go 用量查询
+      opencode_api_base: "https://opencode.ai/zen/go/v1" # v0.3.0+ 可选，默认为官方接口
 ```
 
 ---
@@ -135,11 +145,11 @@ plugins:
 ### 1. 浏览器资源页 (`QuotaCard`)
 
 - **访问路径**：`GET http://<cpa-host>:8317/v0/resource/plugins/commandcode/quota`
-- **菜单名**：`Command Code 配额`
+- **菜单名**：`用量配额`
 - **说明**：
   - 资源请求本身无需经过管理认证，可在浏览器中直接打开或嵌入仪表盘。
-  - 在同源模式下，页面 JavaScript 会自动读取 `localStorage` 中的管理密钥向 `/v0/management/plugins/commandcode/usage` 请求数据。
-  - 若在独立或跨域测试环境下打开，页面提供内置的诊断面板，可手动输入 Management Key 或测试 Session Token。
+  - 在同源模式下，页面 JavaScript 会自动读取 `localStorage` 中的管理密钥向 `/v0/management/plugins/commandcode/all` 请求数据（一次获取 Command Code + OpenCode Go）。
+  - 若在独立或跨域测试环境下打开，页面提供内置的诊断面板，可手动输入 Management Key、测试 Session Token 或 OpenCode API Key（仅当次请求生效，不持久化）。
 
 ### 2. 管理 API: 查询用量 (`GET`)
 
@@ -198,6 +208,55 @@ plugins:
 }
 ```
 
+### 4. 管理 API: OpenCode Go 用量 (`opencode/usage`)
+
+- **端点**：`GET /v0/management/plugins/commandcode/opencode/usage`（认证同上，仅读插件配置；凭据覆盖走 POST）
+- **端点**：`POST /v0/management/plugins/commandcode/opencode/usage`
+- **POST 请求体**：
+
+```json
+{ "opencode_api_key": "sk-YOUR_TEMPORARY_KEY" }
+```
+
+- **响应示例**：
+
+```json
+{
+  "ok": true,
+  "provider": "opencode_go",
+  "windows": {
+    "rolling": { "status": "ok", "percent": 4, "exceeded": false,
+                 "reset_at": "2026-09-17T06:58:53Z", "reset_in_seconds": 2520 },
+    "weekly":  { "status": "ok", "percent": 46, "exceeded": false,
+                 "reset_at": "2026-09-21T00:00:00Z", "reset_in_seconds": 259200 },
+    "monthly": { "status": "ok", "percent": 23, "exceeded": false,
+                 "reset_at": "2026-10-14T09:13:49Z", "reset_in_seconds": 1728000 }
+  },
+  "updated_at": "2026-09-16T12:00:00Z"
+}
+```
+
+### 5. 管理 API: 聚合查询 (`all`)
+
+- **端点**：`GET /v0/management/plugins/commandcode/all`（仅读插件配置）
+- **端点**：`POST /v0/management/plugins/commandcode/all`
+- **POST 请求体**（可只带其一）：
+
+```json
+{ "session_token": "...", "opencode_api_key": "sk-..." }
+```
+
+- **部分失败语义**：HTTP 200 表示至少一个 provider 成功；失败 provider 记入 `errors`，其响应字段（`commandcode`/`opencode`）整个省略；全失败且为本地凭据缺失 → 400，全失败且为上游错误 → 502。
+
+```json
+{
+  "ok": true,
+  "commandcode": { "ok": true, "plan": {...}, "credits": {...}, "window_limits": {...}, "updated_at": "..." },
+  "opencode": { "ok": true, "provider": "opencode_go", "windows": {...}, "updated_at": "..." },
+  "updated_at": "2026-09-16T12:00:00Z"
+}
+```
+
 ---
 
 ## 用量数据结构说明
@@ -215,6 +274,10 @@ plugins:
 | `window_limits.five_hour.reset_at` | `string` | 5小时窗口重置时间的 RFC3339 字符串 |
 | `window_limits.five_hour.reset_in_seconds`| `int64` | 距离 5 小时窗口重置的剩余秒数 |
 | `window_limits.weekly.*` | - | 每周限额对应指标（结构同 5 小时窗口） |
+| `windows.<rolling\|weekly\|monthly>.status` | `string` | OpenCode Go 窗口状态（`"ok"`/上游其他值，未知值不报错） |
+| `windows.<...>.percent` | `float64` | OpenCode Go 窗口使用百分比（0-100，钳制） |
+| `windows.<...>.exceeded` | `bool` | `percent >= 100` 或上游 `status == "exceeded"` |
+| `windows.<...>.reset_at` / `reset_in_seconds` | `string` / `int64` | OpenCode Go 窗口重置时间（解析失败优雅降级为空/0） |
 
 ---
 

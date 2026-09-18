@@ -10,7 +10,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Command Code 配额与用量 - CLIProxyAPI</title>
+  <title>用量配额 - Command Code + OpenCode Go - CLIProxyAPI</title>
   <style>
     :root {
       --bg-page: #f8fafc;
@@ -622,6 +622,157 @@ const QuotaPageHTML = `<!DOCTYPE html>
       letter-spacing: 0.5px;
     }
 
+    /* Tab Bar (Command Code | OpenCode Go | All) */
+    .tab-bar {
+      display: flex;
+      gap: 6px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 6px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .tab-btn {
+      flex: 1;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 12px;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: inherit;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-main);
+      background: var(--bg-subtle);
+    }
+
+    .tab-btn.active {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .tab-section {
+      display: none;
+    }
+
+    .tab-section.active {
+      display: block;
+    }
+
+    /* OpenCode card status chip (reuses .status-badge variants) */
+    .oc-status-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+    }
+
+    /* All tab: two provider cards side by side */
+    .all-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 768px) {
+      .all-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .all-provider-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .all-provider-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .all-provider-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .all-provider-body {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .all-summary-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .all-summary-value {
+      font-weight: 700;
+      color: var(--text-main);
+      font-feature-settings: "tnum";
+    }
+
+    .all-grid .progress-track {
+      height: 8px;
+    }
+
+    /* Per-tab provider failure error cards */
+    .error-card {
+      display: none;
+      background: var(--danger-subtle);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      margin-bottom: 20px;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .error-card.show {
+      display: flex;
+    }
+
+    .error-card-title {
+      color: var(--danger);
+      font-weight: 700;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .error-card-msg {
+      color: var(--danger);
+      font-size: 13px;
+      word-break: break-all;
+    }
+
+    .form-hint {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
     /* Footer */
     .footer-bar {
       display: flex;
@@ -662,11 +813,11 @@ const QuotaPageHTML = `<!DOCTYPE html>
         </div>
         <div>
           <div class="brand-title">
-            Command Code 配额
-            <span class="version-tag">v0.2.2</span>
+            用量配额 - Command Code + OpenCode Go
+            <span class="version-tag">v0.3.0</span>
             <span id="planBadge" class="plan-tag" style="display:none;">Plan: -</span>
           </div>
-          <div class="brand-subtitle">CLIProxyAPI 实时限额与 Credits 用量监控</div>
+          <div class="brand-subtitle">CLIProxyAPI 实时限额与用量监控 (Command Code + OpenCode Go)</div>
         </div>
       </div>
 
@@ -694,6 +845,13 @@ const QuotaPageHTML = `<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- Tab Bar -->
+    <div id="tabBar" class="tab-bar">
+      <button type="button" class="tab-btn active" data-tab="commandcode">Command Code</button>
+      <button type="button" class="tab-btn" data-tab="opencode">OpenCode Go</button>
+      <button type="button" class="tab-btn" data-tab="all">All</button>
+    </div>
+
     <!-- Alert Message -->
     <div id="alertBox" class="alert alert-danger">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
@@ -715,11 +873,28 @@ const QuotaPageHTML = `<!DOCTYPE html>
           <label for="inputSessionToken">Command Code 会话 Token (Session Token 测试)</label>
           <input type="password" id="inputSessionToken" class="form-control" placeholder="覆盖测试: __Secure-commandcode_prod_.session_token" />
         </div>
+        <div class="form-group">
+          <label for="inputOpenCodeKey">OpenCode Go API Key (测试覆盖)</label>
+          <input type="password" id="inputOpenCodeKey" class="form-control" placeholder="覆盖测试: sk-..." />
+          <span class="form-hint">仅测试覆盖用：值不持久化，仅当次请求生效</span>
+        </div>
       </div>
       <div style="margin-top: 14px; display: flex; justify-content: flex-end; gap: 10px;">
         <button id="btnSaveConfig" class="btn btn-primary">保存并重新获取用量</button>
       </div>
     </div>
+
+    <!-- Tab: Command Code -->
+    <div id="sectionCommandcode" class="tab-section active">
+      <div id="ccErrorCard" class="error-card">
+        <div class="error-card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+          <span>Command Code 查询失败</span>
+        </div>
+        <div id="ccErrorMsg" class="error-card-msg">-</div>
+      </div>
+
+      <div id="ccContent">
 
     <!-- Overview Metrics -->
     <div class="metrics-grid">
@@ -847,18 +1022,137 @@ const QuotaPageHTML = `<!DOCTYPE html>
       </div>
     </div>
 
+      </div>
+    </div>
+    <!-- /Tab: Command Code -->
+
+    <!-- Tab: OpenCode Go -->
+    <div id="sectionOpencode" class="tab-section">
+      <div id="ocErrorCard" class="error-card">
+        <div class="error-card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+          <span>OpenCode Go 查询失败</span>
+        </div>
+        <div id="ocErrorMsg" class="error-card-msg">-</div>
+      </div>
+      <div id="ocContent">
+        <div class="metrics-grid">
+          <!-- Rolling 5h Window -->
+          <div id="ocCardRolling" class="quota-card">
+            <div class="quota-card-header">
+              <div>
+                <span class="quota-tag">短期滑动窗口</span>
+                <div class="quota-name">Rolling 5h (5 小时窗口)</div>
+              </div>
+              <div class="oc-status-wrap">
+                <span id="ocStatusRolling" class="status-badge online"><span class="status-dot"></span><span id="ocStatusTextRolling">-</span></span>
+                <div id="ocBadgeRolling" class="quota-percent-badge">- %</div>
+              </div>
+            </div>
+
+            <div class="progress-track">
+              <div id="ocBarRolling" class="progress-bar"></div>
+            </div>
+
+            <div class="reset-box">
+              <div class="reset-label">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                <span>重置倒计时</span>
+              </div>
+              <div id="ocTimerRolling" class="countdown-timer">-</div>
+            </div>
+          </div>
+
+          <!-- Weekly Window -->
+          <div id="ocCardWeekly" class="quota-card">
+            <div class="quota-card-header">
+              <div>
+                <span class="quota-tag" style="color:#8b5cf6; background:rgba(139,92,246,0.12)">周度窗口</span>
+                <div class="quota-name">Weekly (每周限制)</div>
+              </div>
+              <div class="oc-status-wrap">
+                <span id="ocStatusWeekly" class="status-badge online"><span class="status-dot"></span><span id="ocStatusTextWeekly">-</span></span>
+                <div id="ocBadgeWeekly" class="quota-percent-badge">- %</div>
+              </div>
+            </div>
+
+            <div class="progress-track">
+              <div id="ocBarWeekly" class="progress-bar"></div>
+            </div>
+
+            <div class="reset-box">
+              <div class="reset-label">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                <span>重置倒计时</span>
+              </div>
+              <div id="ocTimerWeekly" class="countdown-timer">-</div>
+            </div>
+          </div>
+
+          <!-- Monthly Window -->
+          <div id="ocCardMonthly" class="quota-card">
+            <div class="quota-card-header">
+              <div>
+                <span class="quota-tag" style="color:#f59e0b; background:rgba(245,158,11,0.12)">月度窗口</span>
+                <div class="quota-name">Monthly (月度窗口)</div>
+              </div>
+              <div class="oc-status-wrap">
+                <span id="ocStatusMonthly" class="status-badge online"><span class="status-dot"></span><span id="ocStatusTextMonthly">-</span></span>
+                <div id="ocBadgeMonthly" class="quota-percent-badge">- %</div>
+              </div>
+            </div>
+
+            <div class="progress-track">
+              <div id="ocBarMonthly" class="progress-bar"></div>
+            </div>
+
+            <div class="reset-box">
+              <div class="reset-label">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                <span>重置倒计时</span>
+              </div>
+              <div id="ocTimerMonthly" class="countdown-timer">-</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- /Tab: OpenCode Go -->
+
+    <!-- Tab: All -->
+    <div id="sectionAll" class="tab-section">
+      <div class="all-grid">
+        <div class="all-provider-card">
+          <div class="all-provider-head">
+            <span class="all-provider-name">Command Code</span>
+            <span id="allBadgeCommandcode" class="status-badge"><span class="status-dot"></span><span id="allBadgeTextCommandcode">-</span></span>
+          </div>
+          <div id="allBodyCommandcode" class="all-provider-body">尚未加载</div>
+        </div>
+
+        <div class="all-provider-card">
+          <div class="all-provider-head">
+            <span class="all-provider-name">OpenCode Go</span>
+            <span id="allBadgeOpencode" class="status-badge"><span class="status-dot"></span><span id="allBadgeTextOpencode">-</span></span>
+          </div>
+          <div id="allBodyOpencode" class="all-provider-body">尚未加载</div>
+        </div>
+      </div>
+    </div>
+    <!-- /Tab: All -->
+
     <!-- Footer Status -->
     <div class="footer-bar">
       <div>最后同步时间: <span id="lastUpdated">-</span></div>
       <div class="footer-links">
-        <span id="authInfo">Provider: commandcode</span>
+        <span id="authInfo">Provider: commandcode + opencode_go</span>
       </div>
     </div>
   </div>
 
   <script>
     (function () {
-      const USAGE_ENDPOINT = "/v0/management/plugins/commandcode/usage";
+      const ALL_ENDPOINT = "/v0/management/plugins/commandcode/all";
 
       // Elements
       const btnRefresh = document.getElementById("btnRefresh");
@@ -869,11 +1163,28 @@ const QuotaPageHTML = `<!DOCTYPE html>
       const settingsDrawer = document.getElementById("settingsDrawer");
       const inputMgmtKey = document.getElementById("inputMgmtKey");
       const inputSessionToken = document.getElementById("inputSessionToken");
+      const inputOpenCodeKey = document.getElementById("inputOpenCodeKey");
       const alertBox = document.getElementById("alertBox");
       const alertMsg = document.getElementById("alertMsg");
       const statusBadge = document.getElementById("statusBadge");
       const statusText = document.getElementById("statusText");
       const planBadge = document.getElementById("planBadge");
+
+      // Tab sections and per-provider error cards
+      const ccContent = document.getElementById("ccContent");
+      const ccErrorCard = document.getElementById("ccErrorCard");
+      const ccErrorMsg = document.getElementById("ccErrorMsg");
+      const ocContent = document.getElementById("ocContent");
+      const ocErrorCard = document.getElementById("ocErrorCard");
+      const ocErrorMsg = document.getElementById("ocErrorMsg");
+
+      // All tab elements
+      const allBodyCommandcode = document.getElementById("allBodyCommandcode");
+      const allBadgeCommandcode = document.getElementById("allBadgeCommandcode");
+      const allBadgeTextCommandcode = document.getElementById("allBadgeTextCommandcode");
+      const allBodyOpencode = document.getElementById("allBodyOpencode");
+      const allBadgeOpencode = document.getElementById("allBadgeOpencode");
+      const allBadgeTextOpencode = document.getElementById("allBadgeTextOpencode");
 
       const valMonthlyCredits = document.getElementById("valMonthlyCredits");
       const valOpensourceCredits = document.getElementById("valOpensourceCredits");
@@ -904,10 +1215,42 @@ const QuotaPageHTML = `<!DOCTYPE html>
       const timerWeekly = document.getElementById("timerWeekly");
       const lastUpdated = document.getElementById("lastUpdated");
 
+      // OpenCode Go card elements
+      const ocCardRolling = document.getElementById("ocCardRolling");
+      const ocBadgeRolling = document.getElementById("ocBadgeRolling");
+      const ocBarRolling = document.getElementById("ocBarRolling");
+      const ocTimerRolling = document.getElementById("ocTimerRolling");
+      const ocStatusRolling = document.getElementById("ocStatusRolling");
+      const ocStatusTextRolling = document.getElementById("ocStatusTextRolling");
+
+      const ocCardWeekly = document.getElementById("ocCardWeekly");
+      const ocBadgeWeekly = document.getElementById("ocBadgeWeekly");
+      const ocBarWeekly = document.getElementById("ocBarWeekly");
+      const ocTimerWeekly = document.getElementById("ocTimerWeekly");
+      const ocStatusWeekly = document.getElementById("ocStatusWeekly");
+      const ocStatusTextWeekly = document.getElementById("ocStatusTextWeekly");
+
+      const ocCardMonthly = document.getElementById("ocCardMonthly");
+      const ocBadgeMonthly = document.getElementById("ocBadgeMonthly");
+      const ocBarMonthly = document.getElementById("ocBarMonthly");
+      const ocTimerMonthly = document.getElementById("ocTimerMonthly");
+      const ocStatusMonthly = document.getElementById("ocStatusMonthly");
+      const ocStatusTextMonthly = document.getElementById("ocStatusTextMonthly");
+
+      const ocTimerEls = { rolling: ocTimerRolling, weekly: ocTimerWeekly, monthly: ocTimerMonthly };
+
       let monthlyTargetTime = null;
       let fiveHourTargetTime = null;
       let weeklyTargetTime = null;
       let timerInterval = null;
+
+      // Per-provider render state (drives tab badge aggregation)
+      const providerState = {
+        commandcode: { level: "unknown", err: null, data: null },
+        opencode: { level: "unknown", err: null, data: null }
+      };
+      let activeTab = "commandcode";
+      let ocTargets = { rolling: null, weekly: null, monthly: null };
 
       function getStoredManagementKey() {
         if (inputMgmtKey.value.trim()) {
@@ -965,6 +1308,92 @@ const QuotaPageHTML = `<!DOCTYPE html>
         return n < 10 ? "0" + n : n;
       }
 
+      function esc(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      // Returns a clamped number in [0,100], or null when missing/invalid
+      function clampPercent(v) {
+        if (v === null || v === undefined || v === "") return null;
+        const n = Number(v);
+        if (!isFinite(n)) return null;
+        return Math.min(100, Math.max(0, n));
+      }
+
+      // Unknown status values never error: only explicit exceeded flag,
+      // status "exceeded", or percent >= 100 count as exceeded
+      function levelOf(pct, exceeded, status) {
+        if (exceeded || status === "exceeded" || (pct !== null && pct >= 100)) return "exceeded";
+        if (pct !== null && pct >= 80) return "warning";
+        return "online";
+      }
+
+      const LEVEL_RANK = { unknown: -1, online: 0, warning: 1, error: 2, exceeded: 3 };
+      const BADGE_TEXT = {
+        unknown: "正在检查...",
+        online: "正常运行 (Normal)",
+        warning: "配额紧张 (Warning)",
+        exceeded: "已达限额 (Exceeded)",
+        error: "查询错误"
+      };
+
+      function badgeVisualClass(level) {
+        // error reuses the danger/exceeded look
+        return level === "error" ? "exceeded" : level === "unknown" ? "" : level;
+      }
+
+      function updateGlobalBadge() {
+        let p;
+        if (activeTab === "commandcode") {
+          p = providerState.commandcode;
+        } else if (activeTab === "opencode") {
+          p = providerState.opencode;
+        } else {
+          const a = providerState.commandcode;
+          const b = providerState.opencode;
+          p = LEVEL_RANK[a.level] >= LEVEL_RANK[b.level] ? a : b;
+        }
+        const visual = badgeVisualClass(p.level);
+        statusBadge.className = visual ? "status-badge " + visual : "status-badge";
+        statusText.textContent = BADGE_TEXT[p.level] || "正在检查...";
+      }
+
+      function setProviderStatus(provider, level) {
+        providerState[provider].level = level;
+        providerState[provider].err = null;
+        updateGlobalBadge();
+      }
+
+      function summaryRow(label, value) {
+        return '<div class="all-summary-row"><span class="all-summary-label">' + label + '</span><span class="all-summary-value">' + value + '</span></div>';
+      }
+
+      function miniBar(pct, level) {
+        const cls = level === "exceeded" ? " danger" : level === "warning" ? " warning" : "";
+        const w = pct === null ? 0 : pct;
+        return '<div class="progress-track"><div class="progress-bar' + cls + '" style="width:' + w + '%"></div></div>';
+      }
+
+      function showProviderError(provider, msg) {
+        providerState[provider].level = "error";
+        providerState[provider].err = msg;
+        providerState[provider].data = null;
+        if (provider === "commandcode") {
+          ccContent.style.display = "none";
+          ccErrorMsg.textContent = msg;
+          ccErrorCard.classList.add("show");
+        } else {
+          ocContent.style.display = "none";
+          ocErrorMsg.textContent = msg;
+          ocErrorCard.classList.add("show");
+        }
+        updateGlobalBadge();
+      }
+
       function updateTimers() {
         if (monthlyTargetTime) {
           timerMonthly.textContent = formatCountdown(monthlyTargetTime);
@@ -975,10 +1404,18 @@ const QuotaPageHTML = `<!DOCTYPE html>
         if (weeklyTargetTime) {
           timerWeekly.textContent = formatCountdown(weeklyTargetTime);
         }
+        for (const key in ocTargets) {
+          if (ocTargets[key]) {
+            ocTimerEls[key].textContent = formatCountdown(ocTargets[key]);
+          }
+        }
       }
 
       function renderUsage(data) {
-        hideAlert();
+        providerState.commandcode.err = null;
+        providerState.commandcode.data = data;
+        ccContent.style.display = "";
+        ccErrorCard.classList.remove("show");
         const credits = data.credits || (data.data && data.data.credits) || {};
         const limits = data.window_limits || (data.data && data.data.window_limits) || {};
 
@@ -1051,26 +1488,158 @@ const QuotaPageHTML = `<!DOCTYPE html>
           weeklyTargetTime = null;
         }
 
-        // Overall Status
+        // Per-provider status; the header badge is aggregated in updateGlobalBadge()
+        let ccLevel;
         if (fiveHour.exceeded || weekly.exceeded || monthly.exceeded) {
-          statusBadge.className = "status-badge exceeded";
-          statusText.textContent = "已达限额 (Exceeded)";
+          ccLevel = "exceeded";
         } else if (pFive >= 80 || pWeek >= 80 || pMonth >= 80) {
-          statusBadge.className = "status-badge warning";
-          statusText.textContent = "配额紧张 (Warning)";
+          ccLevel = "warning";
         } else {
-          statusBadge.className = "status-badge online";
-          statusText.textContent = "正常运行 (Normal)";
+          ccLevel = "online";
         }
-
-        const updatedAtStr = data.updated_at || (data.data && data.data.updated_at);
-        if (updatedAtStr) {
-          lastUpdated.textContent = new Date(updatedAtStr).toLocaleString();
-        } else {
-          lastUpdated.textContent = new Date().toLocaleString();
-        }
+        setProviderStatus("commandcode", ccLevel);
 
         updateTimers();
+      }
+
+      function renderOpencode(data) {
+        providerState.opencode.err = null;
+        providerState.opencode.data = data;
+        ocContent.style.display = "";
+        ocErrorCard.classList.remove("show");
+
+        const windows = data.windows || {};
+        const defs = [
+          { key: "rolling", card: ocCardRolling, badge: ocBadgeRolling, bar: ocBarRolling, timer: ocTimerRolling, chip: ocStatusRolling, chipText: ocStatusTextRolling, w: windows.rolling },
+          { key: "weekly", card: ocCardWeekly, badge: ocBadgeWeekly, bar: ocBarWeekly, timer: ocTimerWeekly, chip: ocStatusWeekly, chipText: ocStatusTextWeekly, w: windows.weekly },
+          { key: "monthly", card: ocCardMonthly, badge: ocBadgeMonthly, bar: ocBarMonthly, timer: ocTimerMonthly, chip: ocStatusMonthly, chipText: ocStatusTextMonthly, w: windows.monthly }
+        ];
+
+        let worst = "online";
+        const rank = { online: 0, warning: 1, exceeded: 2 };
+
+        defs.forEach(function (d) {
+          const w = d.w || {};
+          const pct = clampPercent(w.percent);
+          const level = levelOf(pct, w.exceeded, w.status);
+          if (rank[level] > rank[worst]) worst = level;
+
+          d.badge.textContent = pct === null ? "- %" : pct.toFixed(1) + " %";
+          d.bar.style.width = (pct === null ? 0 : pct) + "%";
+          d.bar.className = "progress-bar" + (level === "exceeded" ? " danger" : level === "warning" ? " warning" : "");
+          d.card.className = "quota-card" + (level === "exceeded" ? " is-exceeded" : "");
+          d.chip.className = "status-badge " + level;
+          d.chipText.textContent = level === "exceeded" ? "超限" : level === "warning" ? "紧张" : "正常";
+
+          // reset_at 优先；缺失/不可解析时回退 reset_in_seconds；都没有则显示 "-"
+          let target = null;
+          if (w.reset_at) {
+            const t = new Date(w.reset_at);
+            if (!isNaN(t.getTime())) target = t;
+          }
+          if (!target && w.reset_in_seconds > 0) {
+            target = new Date(Date.now() + Number(w.reset_in_seconds) * 1000);
+          }
+          ocTargets[d.key] = target;
+          if (!target) d.timer.textContent = "-";
+        });
+
+        setProviderStatus("opencode", worst);
+      }
+
+      function renderAllTab() {
+        const cc = providerState.commandcode;
+        const oc = providerState.opencode;
+
+        // Command Code summary card
+        if (cc.err) {
+          allBadgeCommandcode.className = "status-badge exceeded";
+          allBadgeTextCommandcode.textContent = "查询错误";
+          allBodyCommandcode.innerHTML = '<div class="error-card-title">Command Code 查询失败</div><div class="error-card-msg">' + esc(cc.err) + '</div>';
+        } else if (cc.data) {
+          const data = cc.data;
+          const credits = data.credits || (data.data && data.data.credits) || {};
+          const limits = data.window_limits || (data.data && data.data.window_limits) || {};
+          const plan = data.plan || (data.data && data.data.plan);
+          const planName = plan ? (plan.name || (typeof plan === "string" ? plan : "Unknown")) : "-";
+          const windowsDef = [
+            { name: "Monthly", o: limits.monthly || {} },
+            { name: "5-Hour", o: limits.five_hour || {} },
+            { name: "Weekly", o: limits.weekly || {} }
+          ];
+          let worstName = "-";
+          let worstPct = null;
+          let worstLevel = "online";
+          windowsDef.forEach(function (d) {
+            const pct = clampPercent(d.o.percentage);
+            const level = levelOf(pct, d.o.exceeded, "");
+            if (worstPct === null || (pct !== null && pct > worstPct) || level === "exceeded") {
+              worstName = d.name;
+              worstPct = pct === null ? 0 : pct;
+              worstLevel = level;
+            }
+          });
+          allBadgeCommandcode.className = "status-badge " + badgeVisualClass(cc.level);
+          allBadgeTextCommandcode.textContent = BADGE_TEXT[cc.level] || "-";
+          allBodyCommandcode.innerHTML =
+            summaryRow("Plan", esc(planName)) +
+            summaryRow("Total Credits", formatUSD(credits.total_credits)) +
+            summaryRow("Monthly Credits", formatUSD(credits.monthly_credits)) +
+            summaryRow("最差窗口", esc(worstName) + " " + (worstPct === null ? "-" : worstPct.toFixed(1) + "%")) +
+            miniBar(worstPct, worstLevel);
+        } else {
+          allBadgeCommandcode.className = "status-badge";
+          allBadgeTextCommandcode.textContent = "尚未加载";
+          allBodyCommandcode.innerHTML = '<div class="all-summary-value">尚未加载</div>';
+        }
+
+        // OpenCode Go summary card
+        if (oc.err) {
+          allBadgeOpencode.className = "status-badge exceeded";
+          allBadgeTextOpencode.textContent = "查询错误";
+          allBodyOpencode.innerHTML = '<div class="error-card-title">OpenCode Go 查询失败</div><div class="error-card-msg">' + esc(oc.err) + '</div>';
+        } else if (oc.data) {
+          const data = oc.data;
+          const windows = data.windows || {};
+          const defs = [
+            { name: "Rolling 5h", w: windows.rolling },
+            { name: "Weekly", w: windows.weekly },
+            { name: "Monthly", w: windows.monthly }
+          ];
+          let html = "";
+          defs.forEach(function (d) {
+            const win = d.w || {};
+            const pct = clampPercent(win.percent);
+            const level = levelOf(pct, win.exceeded, win.status);
+            html += summaryRow(d.name, pct === null ? "-" : pct.toFixed(1) + "%") + miniBar(pct, level);
+          });
+          allBadgeOpencode.className = "status-badge " + badgeVisualClass(oc.level);
+          allBadgeTextOpencode.textContent = BADGE_TEXT[oc.level] || "-";
+          allBodyOpencode.innerHTML = html;
+        } else {
+          allBadgeOpencode.className = "status-badge";
+          allBadgeTextOpencode.textContent = "尚未加载";
+          allBodyOpencode.innerHTML = '<div class="all-summary-value">尚未加载</div>';
+        }
+      }
+
+      function setActiveTab(tab, updateHash) {
+        activeTab = tab;
+        const tabBtns = document.querySelectorAll(".tab-btn");
+        for (let i = 0; i < tabBtns.length; i++) {
+          tabBtns[i].classList.toggle("active", tabBtns[i].getAttribute("data-tab") === tab);
+        }
+        document.getElementById("sectionCommandcode").classList.toggle("active", tab === "commandcode");
+        document.getElementById("sectionOpencode").classList.toggle("active", tab === "opencode");
+        document.getElementById("sectionAll").classList.toggle("active", tab === "all");
+        updateGlobalBadge();
+        if (updateHash) {
+          if (tab === "commandcode") {
+            history.replaceState(null, "", location.pathname + location.search);
+          } else {
+            location.hash = tab;
+          }
+        }
       }
 
       async function fetchUsage() {
@@ -1079,28 +1648,32 @@ const QuotaPageHTML = `<!DOCTYPE html>
 
         const mgmtKey = getStoredManagementKey();
         const overrideToken = inputSessionToken.value.trim();
+        const overrideOpenCodeKey = inputOpenCodeKey.value.trim();
 
         const headers = {
-          "Accept": "application/json"
+          "Accept": "application/json",
+          "Content-Type": "application/json"
         };
         if (mgmtKey) {
           headers["Authorization"] = "Bearer " + mgmtKey;
           headers["X-Management-Key"] = mgmtKey;
         }
 
-        let method = "GET";
-        let body = null;
+        // 整页只发一次 /all 请求，一次拿两个 provider；
+        // 覆盖凭据仅在填写时才进 body，不持久化
+        const bodyObj = {};
         if (overrideToken) {
-          method = "POST";
-          headers["Content-Type"] = "application/json";
-          body = JSON.stringify({ session_token: overrideToken });
+          bodyObj.session_token = overrideToken;
+        }
+        if (overrideOpenCodeKey) {
+          bodyObj.opencode_api_key = overrideOpenCodeKey;
         }
 
         try {
-          const res = await fetch(USAGE_ENDPOINT, {
-            method: method,
+          const res = await fetch(ALL_ENDPOINT, {
+            method: "POST",
             headers: headers,
-            body: body
+            body: JSON.stringify(bodyObj)
           });
 
           if (res.status === 401 || res.status === 403) {
@@ -1112,19 +1685,46 @@ const QuotaPageHTML = `<!DOCTYPE html>
           }
 
           const json = await res.json();
-          if (!res.ok || json.ok === false) {
-            const msg = json.error || (json.message ? json.message : "获取配额失败 (HTTP " + res.status + ")");
+          if (!res.ok) {
+            const msg = (json && (json.error || json.message)) || "获取配额失败 (HTTP " + res.status + ")";
+            showProviderError("commandcode", msg);
+            showProviderError("opencode", msg);
             showAlert(msg);
-            statusBadge.className = "status-badge exceeded";
-            statusText.textContent = "查询错误";
             return;
           }
 
-          renderUsage(json);
+          // 部分失败不阻塞：缺失/失败 provider 在各自 tab 内渲染错误卡片
+          let anyOk = false;
+          if (json.commandcode && json.commandcode.ok !== false) {
+            renderUsage(json.commandcode);
+            anyOk = true;
+          } else {
+            showProviderError("commandcode", (json.errors && json.errors.commandcode) || "Command Code 查询失败");
+          }
+          if (json.opencode && json.opencode.ok !== false) {
+            renderOpencode(json.opencode);
+            anyOk = true;
+          } else {
+            showProviderError("opencode", (json.errors && json.errors.opencode) || "OpenCode Go 查询失败");
+          }
+
+          if (anyOk) {
+            hideAlert();
+          } else {
+            showAlert("所有数据源查询失败，请检查配置或凭据。");
+          }
+
+          const updatedStr = json.updated_at ||
+            (json.commandcode && json.commandcode.updated_at) ||
+            (json.opencode && json.opencode.updated_at);
+          lastUpdated.textContent = updatedStr ? new Date(updatedStr).toLocaleString() : new Date().toLocaleString();
+
+          renderAllTab();
+          updateTimers();
         } catch (err) {
+          showProviderError("commandcode", "网络或同源请求错误: " + err.message);
+          showProviderError("opencode", "网络或同源请求错误: " + err.message);
           showAlert("网络或同源请求错误: " + err.message);
-          statusBadge.className = "status-badge exceeded";
-          statusText.textContent = "连接失败";
         } finally {
           refreshIcon.classList.remove("spin");
           btnRefresh.disabled = false;
@@ -1148,6 +1748,13 @@ const QuotaPageHTML = `<!DOCTYPE html>
           localStorage.setItem("management_key", key);
         }
         fetchUsage();
+      });
+
+      // Tab switching + hash persistence (#opencode / #all)
+      document.querySelectorAll(".tab-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          setActiveTab(btn.getAttribute("data-tab"), true);
+        });
       });
 
       // Init on load
@@ -1223,6 +1830,14 @@ const QuotaPageHTML = `<!DOCTYPE html>
 
       if (!timerInterval) {
         timerInterval = setInterval(updateTimers, 1000);
+      }
+
+      // Restore tab from location.hash, then initial fetch
+      const initHash = location.hash.replace(/^#/, "");
+      if (initHash === "opencode" || initHash === "all") {
+        setActiveTab(initHash, false);
+      } else {
+        setActiveTab("commandcode", false);
       }
 
       // Initial fetch

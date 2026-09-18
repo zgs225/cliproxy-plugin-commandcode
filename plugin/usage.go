@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	DefaultAPIBase = "https://api.commandcode.ai"
+	DefaultAPIBase         = "https://api.commandcode.ai"
+	DefaultOpenCodeAPIBase = "https://opencode.ai/zen/go/v1"
 )
 
 // HTTPDoer abstracts HTTP requests for testing and fallback.
@@ -56,16 +57,24 @@ func fetchUpstream(ctx context.Context, apiBase, endpoint, sessionToken, hostCal
 	url := fmt.Sprintf("%s/%s", strings.TrimRight(apiBase, "/"), strings.TrimLeft(endpoint, "/"))
 	cookieValue := FormatSessionCookie(cleanToken)
 
+	headers := map[string][]string{
+		"Cookie":     {cookieValue},
+		"Accept":     {"application/json"},
+		"User-Agent": {fmt.Sprintf("cliproxy-plugin-commandcode/%s", PluginVersion)},
+	}
+	return doUpstreamRequest(ctx, http.MethodGet, url, headers, hostCallbackID)
+}
+
+// doUpstreamRequest is the shared transport layer: it tries the host.http.do
+// bridge first (when a host caller is registered) and falls back to net/http.
+// Request semantics (method, URL, headers) are fully controlled by the caller.
+func doUpstreamRequest(ctx context.Context, method, url string, headers map[string][]string, hostCallbackID string) ([]byte, int, error) {
 	// 1. Try host.http.do if hostCaller is configured
 	if hostCaller != nil {
 		reqPayload := HostHTTPRequest{
-			Method: http.MethodGet,
-			URL:    url,
-			Headers: map[string][]string{
-				"Cookie":     {cookieValue},
-				"Accept":     {"application/json"},
-				"User-Agent": {fmt.Sprintf("cliproxy-plugin-commandcode/%s", PluginVersion)},
-			},
+			Method:         method,
+			URL:            url,
+			Headers:        headers,
 			HostCallbackID: hostCallbackID,
 		}
 		rawReq, errMarshal := json.Marshal(reqPayload)
@@ -97,13 +106,15 @@ func fetchUpstream(ctx context.Context, apiBase, endpoint, sessionToken, hostCal
 	}
 
 	// 2. Fallback to Go net/http client
-	httpReq, errNew := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	httpReq, errNew := http.NewRequestWithContext(ctx, method, url, nil)
 	if errNew != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("create HTTP request: %w", errNew)
 	}
-	httpReq.Header.Set("Cookie", cookieValue)
-	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("User-Agent", fmt.Sprintf("cliproxy-plugin-commandcode/%s", PluginVersion))
+	for key, values := range headers {
+		for _, value := range values {
+			httpReq.Header.Add(key, value)
+		}
+	}
 
 	res, errDo := defaultHTTPClient.Do(httpReq)
 	if errDo != nil {
@@ -129,6 +140,88 @@ func FetchCreditsRaw(ctx context.Context, apiBase, sessionToken string, hostCall
 // FetchUsageSummaryRaw fetches the billing-period (monthly) usage totals.
 func FetchUsageSummaryRaw(ctx context.Context, apiBase, sessionToken string, hostCallbackID string) ([]byte, int, error) {
 	return fetchUpstream(ctx, apiBase, "internal/usage/summary", sessionToken, hostCallbackID)
+}
+
+// FetchOpenCodeUsageRaw fetches raw OpenCode Go usage data from
+// {apiBase}/usage with Bearer auth, via host.http.do or net/http fallback.
+func FetchOpenCodeUsageRaw(ctx context.Context, apiBase, apiKey, hostCallbackID string) ([]byte, int, error) {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return nil, http.StatusBadRequest, errors.New("missing opencode_api_key: configure opencode_api_key in plugin config or pass it in the request")
+	}
+
+	if apiBase == "" {
+		apiBase = DefaultOpenCodeAPIBase
+	}
+	url := strings.TrimRight(apiBase, "/") + "/usage"
+
+	headers := map[string][]string{
+		"Authorization": {"Bearer " + apiKey},
+		"Accept":        {"application/json"},
+		"User-Agent":    {fmt.Sprintf("cliproxy-plugin-commandcode/%s", PluginVersion)},
+	}
+	return doUpstreamRequest(ctx, http.MethodGet, url, headers, hostCallbackID)
+}
+
+// ParseOpenCodeUsage parses OpenCode Go usage JSON into the formatted response.
+// Unknown status values are tolerated; a resetsAt that fails to parse is not
+// fatal (ResetAt stays empty and ResetInSeconds stays 0).
+func ParseOpenCodeUsage(raw []byte, now time.Time) (*OpenCodeFormattedUsageResponse, error) {
+	if len(raw) == 0 {
+		return nil, errors.New("empty response body from upstream")
+	}
+
+	var upstream OpenCodeUsageResponse
+	if err := json.Unmarshal(raw, &upstream); err != nil {
+		return nil, fmt.Errorf("unmarshal opencode usage response: %w", err)
+	}
+
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	return &OpenCodeFormattedUsageResponse{
+		OK:       true,
+		Provider: "opencode_go",
+		Windows: OpenCodeFormattedWindows{
+			Rolling: formatOpenCodeWindow(upstream.Usage.Rolling, now),
+			Weekly:  formatOpenCodeWindow(upstream.Usage.Weekly, now),
+			Monthly: formatOpenCodeWindow(upstream.Usage.Monthly, now),
+		},
+		UpdatedAt: now.Format(time.RFC3339),
+	}, nil
+}
+
+// formatOpenCodeWindow formats a single OpenCode Go usage window.
+func formatOpenCodeWindow(w OpenCodeUsageWindow, now time.Time) OpenCodeFormattedWindow {
+	percent := clampOpenCodePercent(w.Percent)
+	out := OpenCodeFormattedWindow{
+		Status:   w.Status,
+		Percent:  percent,
+		Exceeded: percent >= 100 || w.Status == "exceeded",
+	}
+
+	if w.ResetsAt != "" {
+		if t, err := time.Parse(time.RFC3339, w.ResetsAt); err == nil {
+			out.ResetAt = t.UTC().Format(time.RFC3339)
+			if diff := t.UTC().Sub(now); diff > 0 {
+				out.ResetInSeconds = int64(diff.Seconds())
+			}
+		}
+		// Parse failure is not fatal: ResetAt stays empty, ResetInSeconds stays 0.
+	}
+	return out
+}
+
+// clampOpenCodePercent clamps a percentage to [0, 100] with 2-decimal rounding.
+func clampOpenCodePercent(p float64) float64 {
+	if p < 0 {
+		p = 0
+	}
+	if p > 100 {
+		p = 100
+	}
+	return math.Round(p*100) / 100
 }
 
 // ParseAndFormatUsage parses upstream credits JSON into structured usage metrics.
@@ -299,7 +392,7 @@ func formatMonthlyWindow(credits map[string]any, summary *UpstreamUsageSummaryRe
 	if out.Remaining < 0 {
 		out.Remaining = 0
 	}
-	out.ResetAt = ""  // 账单周期重置时间上游未提供
+	out.ResetAt = "" // 账单周期重置时间上游未提供
 	out.ResetInSeconds = 0
 	return out
 }
