@@ -1230,7 +1230,6 @@ const QuotaPageHTML = `<!DOCTYPE html>
       const timerWeekly = document.getElementById("timerWeekly");
       const lastUpdated = document.getElementById("lastUpdated");
 
-      const lastUpdated = document.getElementById("lastUpdated");
       let fiveHourTargetTime = null;
       let weeklyTargetTime = null;
       let timerInterval = null;
