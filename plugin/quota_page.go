@@ -781,6 +781,17 @@ const QuotaPageHTML = `<!DOCTYPE html>
       }
     }
 
+    .all-group-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-muted);
+      margin: 8px 0 10px 2px;
+    }
+
+    .all-group-title:first-child {
+      margin-top: 0;
+    }
+
     .all-provider-card {
       background: var(--bg-card);
       border: 1px solid var(--border-color);
@@ -907,7 +918,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
         <div>
           <div class="brand-title">
             用量配额
-            <span class="version-tag">v0.4.1</span>
+            <span class="version-tag">v0.4.2</span>
           </div>
         </div>
       </div>
@@ -938,9 +949,9 @@ const QuotaPageHTML = `<!DOCTYPE html>
 
     <!-- Tab Bar -->
     <div id="tabBar" class="tab-bar">
-      <button type="button" class="tab-btn active" data-tab="commandcode">Command Code</button>
+      <button type="button" class="tab-btn" data-tab="commandcode">Command Code</button>
       <button type="button" class="tab-btn" data-tab="opencode">OpenCode Go</button>
-      <button type="button" class="tab-btn" data-tab="all">All</button>
+      <button type="button" class="tab-btn active" data-tab="all">All</button>
     </div>
 
     <!-- Alert Message -->
@@ -976,7 +987,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
     </div>
 
     <!-- Tab: Command Code -->
-    <div id="sectionCommandcode" class="tab-section active">
+    <div id="sectionCommandcode" class="tab-section">
       <div id="ccErrorCard" class="error-card">
         <div class="error-card-title">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
@@ -1135,23 +1146,22 @@ const QuotaPageHTML = `<!DOCTYPE html>
     <!-- /Tab: OpenCode Go -->
 
     <!-- Tab: All -->
-    <div id="sectionAll" class="tab-section">
-      <div class="all-grid">
-        <div class="all-provider-card">
-          <div class="all-provider-head">
-            <span class="all-provider-name">Command Code</span>
-            <span id="allBadgeCommandcode" class="status-badge"><span class="status-dot"></span><span id="allBadgeTextCommandcode">-</span></span>
-          </div>
-          <div id="allBodyCommandcode" class="all-provider-body">尚未加载</div>
+    <div id="sectionAll" class="tab-section active">
+      <!-- All tab: vertical groups, one group title per provider -->
+      <div class="all-group-title">Command Code</div>
+      <div class="all-provider-card">
+        <div class="all-provider-head">
+          <span id="allBadgeCommandcode" class="status-badge"><span class="status-dot"></span><span id="allBadgeTextCommandcode">-</span></span>
         </div>
+        <div id="allBodyCommandcode" class="all-provider-body">尚未加载</div>
+      </div>
 
-        <div class="all-provider-card">
-          <div class="all-provider-head">
-            <span class="all-provider-name">OpenCode Go</span>
-            <span id="allBadgeOpencode" class="status-badge"><span class="status-dot"></span><span id="allBadgeTextOpencode">-</span></span>
-          </div>
-          <div id="allBodyOpencode" class="all-provider-body">尚未加载</div>
+      <div class="all-group-title">OpenCode Go</div>
+      <div class="all-provider-card">
+        <div class="all-provider-head">
+          <span id="allBadgeOpencode" class="status-badge"><span class="status-dot"></span><span id="allBadgeTextOpencode">-</span></span>
         </div>
+        <div id="allBodyOpencode" class="all-provider-body">尚未加载</div>
       </div>
     </div>
     <!-- /Tab: All -->
@@ -1239,9 +1249,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
         commandcode: { level: "unknown", err: null, data: null },
         opencode: { level: "unknown", err: null, data: null }
       };
-      let activeTab = "commandcode";
-      // Multi-key countdown targets: [{el, target}] across all keys x 3 windows
-      let ocTargets = [];
+      let activeTab = "all";
 
       function getStoredManagementKey() {
         if (inputMgmtKey.value.trim()) {
@@ -1385,6 +1393,9 @@ const QuotaPageHTML = `<!DOCTYPE html>
         updateGlobalBadge();
       }
 
+      // Multi-window countdown elements carry their reset info in data
+      // attributes (data-reset-at ISO string, or data-reset-secs seconds),
+      // so updateTimers() can walk every tab容器's .oc-win-reset uniformly
       function updateTimers() {
         if (monthlyTargetTime) {
           timerMonthly.textContent = formatCountdown(monthlyTargetTime);
@@ -1395,11 +1406,20 @@ const QuotaPageHTML = `<!DOCTYPE html>
         if (weeklyTargetTime) {
           timerWeekly.textContent = formatCountdown(weeklyTargetTime);
         }
-        for (let i = 0; i < ocTargets.length; i++) {
-          const t = ocTargets[i];
-          if (t && t.el) {
-            t.el.textContent = t.target ? formatCountdown(t.target) : "-";
+        const allResetEls = document.querySelectorAll(".oc-win-reset");
+        for (let i = 0; i < allResetEls.length; i++) {
+          const el = allResetEls[i];
+          let target = null;
+          const at = el.getAttribute("data-reset-at");
+          if (at) {
+            const t = new Date(at);
+            if (!isNaN(t.getTime())) target = t;
           }
+          if (!target) {
+            const secs = Number(el.getAttribute("data-reset-secs"));
+            if (secs > 0) target = new Date(Date.now() + secs * 1000);
+          }
+          el.textContent = target ? formatCountdown(target) : "-";
         }
       }
 
@@ -1493,7 +1513,6 @@ const QuotaPageHTML = `<!DOCTYPE html>
 
         updateTimers();
       }
-
       function renderOpencode(data) {
         providerState.opencode.err = null;
         providerState.opencode.data = data;
@@ -1507,8 +1526,21 @@ const QuotaPageHTML = `<!DOCTYPE html>
 
         ocContent.style.display = "";
         ocErrorCard.classList.remove("show");
-        ocTargets = [];
 
+        // All tab 的 OpenCode 组与本 tab 共用同一套逐 key 渲染逻辑
+        const rendered = renderOpenCodeKeyGroups(keys);
+        ocContent.innerHTML = rendered.html;
+        updateTimers();
+
+        setProviderStatus("opencode", rendered.worst);
+      }
+
+      // Shared per-key group renderer: the OpenCode tab and the All tab's
+      // OpenCode group both consume this to avoid logic drift. Returns
+      // { html, worst }. Countdown info is stamped into data-reset-at (ISO
+      // string) or data-reset-secs (seconds) attributes on .oc-win-reset
+      // elements, so updateTimers() uniformly walks every tab container.
+      function renderOpenCodeKeyGroups(keys) {
         const WIN_DEFS = [
           { name: "Rolling 5h", key: "rolling" },
           { name: "Weekly", key: "weekly" },
@@ -1533,15 +1565,19 @@ const QuotaPageHTML = `<!DOCTYPE html>
               if (rank[level] > rank[keyWorst]) keyWorst = level;
               if (rank[level] > rank[worst]) worst = level;
 
-              // reset_at 优先；缺失/不可解析时回退 reset_in_seconds；皆无显示 "-"
-              let target = null;
+              // reset_at 优先；缺失/不可解析时回退 reset_in_seconds；皆无显 "-"
+              let resetAt = "";
+              let resetSecs = "";
               if (w.reset_at) {
                 const t = new Date(w.reset_at);
-                if (!isNaN(t.getTime())) target = t;
+                if (!isNaN(t.getTime())) resetAt = t.toISOString();
               }
-              if (!target && w.reset_in_seconds > 0) {
-                target = new Date(Date.now() + Number(w.reset_in_seconds) * 1000);
+              if (!resetAt && w.reset_in_seconds > 0) {
+                resetSecs = String(w.reset_in_seconds);
               }
+              const resetAttr = resetAt
+                ? " data-reset-at=\"" + esc(resetAt) + "\""
+                : (resetSecs ? " data-reset-secs=\"" + esc(resetSecs) + "\"" : "");
 
               const pctText = pct === null ? "-" : Math.round(pct) + "%";
               const pctCls = level === "exceeded" ? " bad" : pct !== null && pct >= 80 ? " warn" : "";
@@ -1551,9 +1587,8 @@ const QuotaPageHTML = `<!DOCTYPE html>
                 '<span class="oc-win-name">' + def.name + '</span>' +
                 '<div class="progress-track oc-win-bar"><div class="progress-bar' + barCls + '" style="width:' + (pct === null ? 0 : pct) + '%"></div></div>' +
                 '<span class="oc-win-pct' + pctCls + '">' + pctText + '</span>' +
-                '<span class="oc-win-reset countdown-timer">-</span>' +
+                '<span class="oc-win-reset countdown-timer"' + resetAttr + '>-</span>' +
                 '</div>';
-              ocTargets.push({ el: null, target: target });
             });
 
             const chipText = keyWorst === "exceeded" ? "超限" : keyWorst === "warning" ? "紧张" : "正常";
@@ -1578,16 +1613,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
           }
         });
 
-        ocContent.innerHTML = html;
-
-        // 绑定多 key x 3 窗口的倒计时元素（与 ocTargets 顺序一致）
-        const resetEls = ocContent.querySelectorAll(".oc-win-reset");
-        for (let i = 0; i < ocTargets.length; i++) {
-          if (resetEls[i]) ocTargets[i].el = resetEls[i];
-        }
-        updateTimers();
-
-        setProviderStatus("opencode", worst);
+        return { html: html, worst: worst };
       }
 
       function renderAllTab() {
@@ -1643,32 +1669,10 @@ const QuotaPageHTML = `<!DOCTYPE html>
           allBodyOpencode.innerHTML = '<div class="error-card-title">OpenCode Go 查询失败</div><div class="error-card-msg">' + esc(oc.err) + '</div>';
         } else if (oc.data) {
           const data = oc.data;
-          // 多 key 契约：逐 key 紧凑列表（key_id + 最差窗口 percent + miniBar）
+          // 多 key 契约：逐 key 完整卡片，与 OpenCode tab 共用同一渲染函数
           const keys = Array.isArray(data.keys) ? data.keys : [];
-          let html = "";
-          keys.forEach(function (k) {
-            const keyId = '<span class="all-key-id">' + esc(k.key_id || "***") + '</span>';
-            if (k.ok && k.windows) {
-              const wins = [k.windows.rolling || {}, k.windows.weekly || {}, k.windows.monthly || {}];
-              let worstPct = null;
-              let worstLevel = "online";
-              wins.forEach(function (w) {
-                const pct = clampPercent(w.percent);
-                const level = levelOf(pct, w.exceeded, w.status);
-                if (worstPct === null || (pct !== null && pct > worstPct) || level === "exceeded") {
-                  worstPct = pct === null ? 0 : pct;
-                  worstLevel = level;
-                }
-              });
-              html += summaryRow(keyId, worstPct === null ? "-" : Math.round(worstPct) + "%") + miniBar(worstPct, worstLevel);
-            } else {
-              const label = k.status_code === 401 ? "凭据无效" : "查询错误";
-              html += summaryRow(keyId, '<span class="error-card-msg" style="font-size:12px">' + label + '</span>');
-            }
-          });
-          if (!html) {
-            html = '<div class="all-summary-value">无 key 数据</div>';
-          }
+          const rendered = renderOpenCodeKeyGroups(keys);
+          const html = rendered.html || '<div class="all-summary-value">无 key 数据</div>';
           allBadgeOpencode.className = "status-badge " + badgeVisualClass(oc.level);
           allBadgeTextOpencode.textContent = BADGE_TEXT[oc.level] || "-";
           allBodyOpencode.innerHTML = html;
@@ -1690,7 +1694,8 @@ const QuotaPageHTML = `<!DOCTYPE html>
         document.getElementById("sectionAll").classList.toggle("active", tab === "all");
         updateGlobalBadge();
         if (updateHash) {
-          if (tab === "commandcode") {
+          if (tab === "all") {
+            // All 为默认 tab：激活 All 时清掉 hash（刷新回到默认）
             history.replaceState(null, "", location.pathname + location.search);
           } else {
             location.hash = tab;
@@ -1890,11 +1895,12 @@ const QuotaPageHTML = `<!DOCTYPE html>
       }
 
       // Restore tab from location.hash, then initial fetch
+      // 无 hash 默认 All：All tab 才能通过刷新后的 #all hash 恢复
       const initHash = location.hash.replace(/^#/, "");
-      if (initHash === "opencode" || initHash === "all") {
+      if (initHash === "opencode" || initHash === "commandcode") {
         setActiveTab(initHash, false);
       } else {
-        setActiveTab("commandcode", false);
+        setActiveTab("all", false);
       }
 
       // Initial fetch
