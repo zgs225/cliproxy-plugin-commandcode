@@ -918,17 +918,12 @@ const QuotaPageHTML = `<!DOCTYPE html>
         <div>
           <div class="brand-title">
             用量配额
-            <span class="version-tag">v0.4.2</span>
+            <span class="version-tag">v0.4.3</span>
           </div>
         </div>
       </div>
 
       <div class="action-group">
-        <div id="statusBadge" class="status-badge">
-          <span class="status-dot"></span>
-          <span id="statusText">正在检查...</span>
-        </div>
-
         <button id="btnSettings" class="btn" title="配置选项">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
@@ -949,9 +944,9 @@ const QuotaPageHTML = `<!DOCTYPE html>
 
     <!-- Tab Bar -->
     <div id="tabBar" class="tab-bar">
+      <button type="button" class="tab-btn active" data-tab="all">All</button>
       <button type="button" class="tab-btn" data-tab="commandcode">Command Code</button>
       <button type="button" class="tab-btn" data-tab="opencode">OpenCode Go</button>
-      <button type="button" class="tab-btn active" data-tab="all">All</button>
     </div>
 
     <!-- Alert Message -->
@@ -1191,8 +1186,6 @@ const QuotaPageHTML = `<!DOCTYPE html>
       const inputOpenCodeKeys = document.getElementById("inputOpenCodeKeys");
       const alertBox = document.getElementById("alertBox");
       const alertMsg = document.getElementById("alertMsg");
-      const statusBadge = document.getElementById("statusBadge");
-      const statusText = document.getElementById("statusText");
       const planBadge = document.getElementById("planBadge");
 
       // Tab sections and per-provider error cards
@@ -1345,26 +1338,9 @@ const QuotaPageHTML = `<!DOCTYPE html>
         return level === "error" ? "exceeded" : level === "unknown" ? "" : level;
       }
 
-      function updateGlobalBadge() {
-        let p;
-        if (activeTab === "commandcode") {
-          p = providerState.commandcode;
-        } else if (activeTab === "opencode") {
-          p = providerState.opencode;
-        } else {
-          const a = providerState.commandcode;
-          const b = providerState.opencode;
-          p = LEVEL_RANK[a.level] >= LEVEL_RANK[b.level] ? a : b;
-        }
-        const visual = badgeVisualClass(p.level);
-        statusBadge.className = visual ? "status-badge " + visual : "status-badge";
-        statusText.textContent = BADGE_TEXT[p.level] || "正在检查...";
-      }
-
       function setProviderStatus(provider, level) {
         providerState[provider].level = level;
         providerState[provider].err = null;
-        updateGlobalBadge();
       }
 
       function summaryRow(label, value) {
@@ -1390,7 +1366,6 @@ const QuotaPageHTML = `<!DOCTYPE html>
           ocErrorMsg.textContent = msg;
           ocErrorCard.classList.add("show");
         }
-        updateGlobalBadge();
       }
 
       // Multi-window countdown elements carry their reset info in data
@@ -1500,7 +1475,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
           weeklyTargetTime = null;
         }
 
-        // Per-provider status; the header badge is aggregated in updateGlobalBadge()
+        // Per-provider status; consumed by All tab provider badges
         let ccLevel;
         if (fiveHour.exceeded || weekly.exceeded || monthly.exceeded) {
           ccLevel = "exceeded";
@@ -1692,7 +1667,6 @@ const QuotaPageHTML = `<!DOCTYPE html>
         document.getElementById("sectionCommandcode").classList.toggle("active", tab === "commandcode");
         document.getElementById("sectionOpencode").classList.toggle("active", tab === "opencode");
         document.getElementById("sectionAll").classList.toggle("active", tab === "all");
-        updateGlobalBadge();
         if (updateHash) {
           if (tab === "all") {
             // All 为默认 tab：激活 All 时清掉 hash（刷新回到默认）
@@ -1741,8 +1715,6 @@ const QuotaPageHTML = `<!DOCTYPE html>
           if (res.status === 401 || res.status === 403) {
             settingsDrawer.classList.add("open");
             showAlert("需要 CLIProxyAPI 管理密钥 (401/403)。请在上方输入框填入 Management Key 并保存。", true);
-            statusBadge.className = "status-badge warning";
-            statusText.textContent = "未授权";
             return;
           }
 

@@ -74,8 +74,8 @@ func TestHandleManagement_QuotaResource(t *testing.T) {
 		if !strings.Contains(bodyStr, "用量配额") {
 			t.Errorf("Body does not contain expected menu text 用量配额")
 		}
-		if !strings.Contains(bodyStr, "v0.4.2") {
-			t.Errorf("Body does not contain version badge v0.4.2")
+		if !strings.Contains(bodyStr, "v0.4.3") {
+			t.Errorf("Body does not contain version badge v0.4.3")
 		}
 	}
 }
