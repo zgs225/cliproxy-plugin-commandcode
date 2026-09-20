@@ -907,7 +907,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
         <div>
           <div class="brand-title">
             用量配额
-            <span class="version-tag">v0.4.0</span>
+            <span class="version-tag">v0.4.1</span>
           </div>
         </div>
       </div>
