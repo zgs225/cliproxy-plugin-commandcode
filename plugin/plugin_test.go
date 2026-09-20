@@ -46,15 +46,15 @@ api_base: "https://custom-api.commandcode.ai"
 		t.Errorf("Capabilities.ManagementAPI = false, want true")
 	}
 
-	// Verify config fields
-	if len(reg.Metadata.ConfigFields) != 4 {
-		t.Fatalf("ConfigFields len = %d, want 4", len(reg.Metadata.ConfigFields))
+	// Verify config fields (v0.4.0: 4 → 5, adds opencode_api_keys)
+	if len(reg.Metadata.ConfigFields) != 5 {
+		t.Fatalf("ConfigFields len = %d, want 5", len(reg.Metadata.ConfigFields))
 	}
 	fieldNames := map[string]bool{}
 	for _, f := range reg.Metadata.ConfigFields {
 		fieldNames[f.Name] = true
 	}
-	if !fieldNames["session_token"] || !fieldNames["api_base"] || !fieldNames["opencode_api_key"] || !fieldNames["opencode_api_base"] {
+	if !fieldNames["session_token"] || !fieldNames["api_base"] || !fieldNames["opencode_api_key"] || !fieldNames["opencode_api_keys"] || !fieldNames["opencode_api_base"] {
 		t.Errorf("ConfigFields missing expected fields: %+v", reg.Metadata.ConfigFields)
 	}
 
@@ -169,4 +169,90 @@ func TestPluginConfig_OpenCode(t *testing.T) {
 	if got := empty.config.GetOpenCodeAPIKey(); got != "" {
 		t.Errorf("default OpenCodeAPIKey = %q, want empty", got)
 	}
+	if got := empty.config.GetOpenCodeAPIKeys(); len(got) != 0 {
+		t.Errorf("default GetOpenCodeAPIKeys = %v, want empty", got)
+	}
+}
+
+func TestPluginConfig_OpenCodeAPIKeys(t *testing.T) {
+	newCfg := func(t *testing.T, yaml string) *PluginConfig {
+		t.Helper()
+		cfg := &PluginConfig{}
+		if err := cfg.UpdateFromYAML([]byte(yaml)); err != nil {
+			t.Fatalf("UpdateFromYAML error: %v", err)
+		}
+		return cfg
+	}
+
+	t.Run("list takes precedence over scalar", func(t *testing.T) {
+		cfg := newCfg(t, `
+opencode_api_key: "sk-scalar"
+opencode_api_keys:
+  - " sk-key1 "
+  - "sk-key2"
+`)
+		got := cfg.GetOpenCodeAPIKeys()
+		if len(got) != 2 || got[0] != "sk-key1" || got[1] != "sk-key2" {
+			t.Errorf("GetOpenCodeAPIKeys = %v, want [sk-key1 sk-key2] (list wins, trimmed)", got)
+		}
+		if cfg.GetOpenCodeAPIKey() != "sk-scalar" {
+			t.Errorf("GetOpenCodeAPIKey = %q, want sk-scalar (scalar field kept)", cfg.GetOpenCodeAPIKey())
+		}
+	})
+
+	t.Run("scalar degrades to single-key list", func(t *testing.T) {
+		cfg := newCfg(t, `
+opencode_api_key: " sk-only "
+`)
+		got := cfg.GetOpenCodeAPIKeys()
+		if len(got) != 1 || got[0] != "sk-only" {
+			t.Errorf("GetOpenCodeAPIKeys = %v, want [sk-only]", got)
+		}
+	})
+
+	t.Run("dedup preserve order and drop empties", func(t *testing.T) {
+		cfg := newCfg(t, `
+opencode_api_keys:
+  - "sk-b"
+  - ""
+  - "  "
+  - "sk-a"
+  - "sk-b"
+  - "sk-c"
+  - "sk-a"
+`)
+		got := cfg.GetOpenCodeAPIKeys()
+		want := []string{"sk-b", "sk-a", "sk-c"}
+		if len(got) != len(want) {
+			t.Fatalf("GetOpenCodeAPIKeys = %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("GetOpenCodeAPIKeys[%d] = %q, want %q (order preserved, deduped)", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("all empty yields no keys", func(t *testing.T) {
+		for _, yaml := range []string{
+			`opencode_api_key: ""`,
+			"opencode_api_keys: []\nopencode_api_key: \"   \"",
+			"opencode_api_keys:\n  - \"\"\n  - \"   \"",
+		} {
+			cfg := newCfg(t, yaml)
+			if got := cfg.GetOpenCodeAPIKeys(); len(got) != 0 {
+				t.Errorf("yaml %q: GetOpenCodeAPIKeys = %v, want empty", yaml, got)
+			}
+		}
+	})
+
+	t.Run("getter returns a copy", func(t *testing.T) {
+		cfg := newCfg(t, "opencode_api_keys:\n  - sk-a\n  - sk-b\n")
+		got := cfg.GetOpenCodeAPIKeys()
+		got[0] = "mutated"
+		again := cfg.GetOpenCodeAPIKeys()
+		if again[0] != "sk-a" {
+			t.Errorf("GetOpenCodeAPIKeys not a copy: after mutation got %q", again[0])
+		}
+	})
 }

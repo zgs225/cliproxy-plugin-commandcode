@@ -273,36 +273,91 @@ func executeUsageQuery(ctx context.Context, apiBase, sessionToken, hostCallbackI
 }
 
 // handleOpenCodeUsage serves GET/POST /plugins/commandcode/opencode/usage.
-// Credentials can be overridden via POST body only (opencode_api_key / api_key);
-// GET queries are read-only against the plugin config — query parameter
-// overrides are intentionally not supported to keep secrets out of URLs.
+// Credentials can be overridden via POST body only (opencode_api_keys list /
+// opencode_api_key scalar); GET queries are read-only against the plugin
+// config — query parameter overrides are intentionally not supported to keep
+// secrets out of URLs.
+//
+// The response is the multi-key OpenCodeMultiKeyResponse envelope (v0.4.0):
+// >=1 key succeeded → 200; keys configured but all upstream-failed → 502; no
+// keys configured at all → 400 with a top-level "no opencode api keys
+// configured ..." error.
 func handleOpenCodeUsage(ctx context.Context, req ManagementRequest, cfg *PluginConfig) (ManagementResponse, error) {
-	apiKey := ""
 	apiBase := ""
+	var keys []string
 
-	if strings.EqualFold(strings.ToUpper(strings.TrimSpace(req.Method)), http.MethodPost) && len(req.Body) > 0 {
+	if req.Method == http.MethodPost && len(req.Body) > 0 {
 		var body struct {
-			OpenCodeAPIKey  string `json:"opencode_api_key"`
-			APIKey          string `json:"api_key"`
-			OpenCodeAPIBase string `json:"opencode_api_base"`
+			OpenCodeAPIKeys []string `json:"opencode_api_keys"`
+			OpenCodeAPIKey  string   `json:"opencode_api_key"`
+			APIKey          string   `json:"api_key"`
+			OpenCodeAPIBase string   `json:"opencode_api_base"`
 		}
 		_ = json.Unmarshal(req.Body, &body)
-		apiKey = body.OpenCodeAPIKey
-		if apiKey == "" {
-			apiKey = body.APIKey
+		keys = normalizeOpenCodeKeys(body.OpenCodeAPIKeys)
+		if len(keys) == 0 {
+			single := strings.TrimSpace(body.OpenCodeAPIKey)
+			if single == "" {
+				single = strings.TrimSpace(body.APIKey)
+			}
+			if single != "" {
+				keys = []string{single}
+			}
 		}
 		apiBase = body.OpenCodeAPIBase
 	}
 
 	// Fallback to plugin config
-	if apiKey == "" && cfg != nil {
-		apiKey = cfg.GetOpenCodeAPIKey()
+	if len(keys) == 0 && cfg != nil {
+		keys = cfg.GetOpenCodeAPIKeys()
 	}
 	if apiBase == "" && cfg != nil {
 		apiBase = cfg.GetOpenCodeAPIBase()
 	}
 
-	return handleOpenCodeUsageWithKey(ctx, apiBase, apiKey, req.HostCallbackID)
+	now := time.Now().UTC()
+	if len(keys) == 0 {
+		resBytes, _ := json.Marshal(OpenCodeMultiKeyResponse{
+			OK:        false,
+			Provider:  "opencode_go",
+			Keys:      []OpenCodeKeyResult{},
+			UpdatedAt: now.Format(time.RFC3339),
+			Error:     "no opencode api keys configured. Configure opencode_api_keys (YAML list) or opencode_api_key in the plugin config, or pass opencode_api_keys in the POST body",
+		})
+		return ManagementResponse{
+			StatusCode: http.StatusBadRequest,
+			Headers: map[string][]string{
+				"Content-Type": {"application/json"},
+			},
+			Body: resBytes,
+		}, nil
+	}
+
+	results := QueryOpenCodeKeys(ctx, apiBase, keys, req.HostCallbackID)
+	succeeded := 0
+	for _, r := range results {
+		if r.OK {
+			succeeded++
+		}
+	}
+
+	statusCode := http.StatusOK
+	if succeeded == 0 {
+		statusCode = http.StatusBadGateway
+	}
+	resBytes, _ := json.Marshal(OpenCodeMultiKeyResponse{
+		OK:        succeeded > 0,
+		Provider:  "opencode_go",
+		Keys:      results,
+		UpdatedAt: now.Format(time.RFC3339),
+	})
+	return ManagementResponse{
+		StatusCode: statusCode,
+		Headers: map[string][]string{
+			"Content-Type": {"application/json"},
+		},
+		Body: resBytes,
+	}, nil
 }
 
 // handleAllUsage serves GET/POST /plugins/commandcode/all: it queries both
@@ -314,24 +369,30 @@ func handleOpenCodeUsage(ctx context.Context, req ManagementRequest, cfg *Plugin
 // all failed due to upstream errors → 502.
 func handleAllUsage(ctx context.Context, req ManagementRequest, cfg *PluginConfig) (ManagementResponse, error) {
 	sessionToken := ""
-	opencodeKey := ""
+	opencodeKeys := []string{}
 
-	if strings.EqualFold(strings.ToUpper(strings.TrimSpace(req.Method)), http.MethodPost) && len(req.Body) > 0 {
+	if req.Method == http.MethodPost && len(req.Body) > 0 {
 		var body struct {
-			SessionToken   string `json:"session_token"`
-			OpencodeAPIKey string `json:"opencode_api_key"`
+			SessionToken    string   `json:"session_token"`
+			OpencodeAPIKeys []string `json:"opencode_api_keys"`
+			OpencodeAPIKey  string   `json:"opencode_api_key"`
 		}
 		_ = json.Unmarshal(req.Body, &body)
 		sessionToken = body.SessionToken
-		opencodeKey = body.OpencodeAPIKey
+		opencodeKeys = normalizeOpenCodeKeys(body.OpencodeAPIKeys)
+		if len(opencodeKeys) == 0 {
+			if single := strings.TrimSpace(body.OpencodeAPIKey); single != "" {
+				opencodeKeys = []string{single}
+			}
+		}
 	}
 
 	// Fallback to plugin config
 	if sessionToken == "" && cfg != nil {
 		sessionToken = cfg.GetSessionToken()
 	}
-	if opencodeKey == "" && cfg != nil {
-		opencodeKey = cfg.GetOpenCodeAPIKey()
+	if len(opencodeKeys) == 0 && cfg != nil {
+		opencodeKeys = cfg.GetOpenCodeAPIKeys()
 	}
 	apiBase := ""
 	if cfg != nil {
@@ -364,25 +425,34 @@ func handleAllUsage(ctx context.Context, req ManagementRequest, cfg *PluginConfi
 		}
 	}
 
-	// Provider 2: OpenCode Go (same classification via isLocalCredentialError,
-	// not by HTTP 400 alone: upstream 4xx may be passed through and must not
-	// be misclassified as a local configuration problem).
-	if strings.TrimSpace(opencodeKey) != "" {
-		ocResp, _ := handleOpenCodeUsageWithKey(ctx, ocAPIBase, opencodeKey, req.HostCallbackID)
-		if ocResp.StatusCode == http.StatusOK {
-			resp.OpenCode = ocResp.Body
-			succeeded++
-		} else {
-			ocErr := extractErrorResponseMessage(ocResp.Body)
-			errs["opencode"] = ocErr
-			if isLocalCredentialError(ocErr) {
-				localMissing++
-			} else {
-				upstreamFailed++
+	// Provider 2: OpenCode Go, one sequential query per configured key
+	// (v0.4.0). >=1 key success counts the provider as successful and the
+	// multi-key payload is inlined; keys configured but all failed is an
+	// upstream failure (a configured-but-invalid key is NOT a local config
+	// problem); zero keys configured is a local missing-credential error.
+	if len(opencodeKeys) > 0 {
+		results := QueryOpenCodeKeys(ctx, ocAPIBase, opencodeKeys, req.HostCallbackID)
+		succeededKeys := 0
+		for _, r := range results {
+			if r.OK {
+				succeededKeys++
 			}
 		}
+		if succeededKeys > 0 {
+			ocBytes, _ := json.Marshal(OpenCodeMultiKeyResponse{
+				OK:        true,
+				Provider:  "opencode_go",
+				Keys:      results,
+				UpdatedAt: now.Format(time.RFC3339),
+			})
+			resp.OpenCode = ocBytes
+			succeeded++
+		} else {
+			errs["opencode"] = fmt.Sprintf("all %d opencode keys failed", len(opencodeKeys))
+			upstreamFailed++
+		}
 	} else {
-		errs["opencode"] = "missing opencode_api_key: configure opencode_api_key in plugin config or pass it in the request body"
+		errs["opencode"] = "no opencode api keys configured. Configure opencode_api_keys (YAML list) or opencode_api_key in the plugin config, or pass opencode_api_keys in the POST body"
 		localMissing++
 	}
 
@@ -419,6 +489,7 @@ func isLocalCredentialError(msg string) bool {
 	for _, prefix := range []string{
 		"session_token is required",
 		"opencode_api_key is required",
+		"no opencode api keys configured",
 	} {
 		if strings.HasPrefix(msg, prefix) {
 			return true
@@ -427,81 +498,51 @@ func isLocalCredentialError(msg string) bool {
 	return false
 }
 
-// handleOpenCodeUsageWithKey runs the OpenCode usage query with an explicit
-// credential, shared by handleOpenCodeUsage and handleAllUsage.
-func handleOpenCodeUsageWithKey(ctx context.Context, apiBase, apiKey, hostCallbackID string) (ManagementResponse, error) {
-	if strings.TrimSpace(apiKey) == "" {
-		resBytes, _ := json.Marshal(map[string]any{
-			"ok":    false,
-			"error": "opencode_api_key is required. Configure opencode_api_key in plugin config or pass it in the request body",
-		})
-		return ManagementResponse{
-			StatusCode: http.StatusBadRequest,
-			Headers: map[string][]string{
-				"Content-Type": {"application/json"},
-			},
-			Body: resBytes,
-		}, nil
+// queryOpenCodeKey runs the OpenCode Go usage query for a single API key and
+// returns a typed per-key result, shared by handleOpenCodeUsage and
+// handleAllUsage (via QueryOpenCodeKeys). The handler layer is responsible
+// for marshaling the aggregate response and picking the HTTP status code.
+func queryOpenCodeKey(ctx context.Context, apiBase, key, hostCallbackID string) (OpenCodeKeyResult, error) {
+	now := time.Now().UTC()
+	res := OpenCodeKeyResult{
+		KeyID:     MaskAPIKey(key),
+		UpdatedAt: now.Format(time.RFC3339),
 	}
 
-	raw, statusCode, errFetch := FetchOpenCodeUsageRaw(ctx, apiBase, apiKey, hostCallbackID)
+	if strings.TrimSpace(key) == "" {
+		res.StatusCode = http.StatusBadRequest
+		res.Error = "opencode_api_key is required. Configure opencode_api_keys in plugin config or pass it in the request"
+		return res, nil
+	}
+
+	raw, statusCode, errFetch := FetchOpenCodeUsageRaw(ctx, apiBase, key, hostCallbackID)
 	if errFetch != nil {
-		errMsg := fmt.Sprintf("opencode upstream request failed: %s", errFetch.Error())
-		resBytes, _ := json.Marshal(map[string]any{
-			"ok":          false,
-			"status_code": statusCode,
-			"error":       errMsg,
-		})
 		if statusCode == 0 || statusCode == http.StatusOK {
 			statusCode = http.StatusBadGateway
 		}
-		return ManagementResponse{
-			StatusCode: statusCode,
-			Headers: map[string][]string{
-				"Content-Type": {"application/json"},
-			},
-			Body: resBytes,
-		}, nil
+		res.StatusCode = statusCode
+		res.Error = fmt.Sprintf("opencode upstream request failed: %s", errFetch.Error())
+		return res, nil
 	}
 
 	if statusCode != http.StatusOK {
-		resBytes, _ := json.Marshal(map[string]any{
-			"ok":          false,
-			"status_code": statusCode,
-			"error":       fmt.Sprintf("opencode upstream returned %d: check opencode_api_key", statusCode),
-		})
-		return ManagementResponse{
-			StatusCode: statusCode,
-			Headers: map[string][]string{
-				"Content-Type": {"application/json"},
-			},
-			Body: resBytes,
-		}, nil
+		res.StatusCode = statusCode
+		res.Error = fmt.Sprintf("opencode upstream returned %d: check opencode_api_key", statusCode)
+		return res, nil
 	}
 
-	usage, errParse := ParseOpenCodeUsage(raw, time.Now().UTC())
+	usage, errParse := ParseOpenCodeUsage(raw, now)
 	if errParse != nil {
-		resBytes, _ := json.Marshal(map[string]any{
-			"ok":    false,
-			"error": "failed to parse opencode upstream usage: " + errParse.Error(),
-		})
-		return ManagementResponse{
-			StatusCode: http.StatusBadGateway,
-			Headers: map[string][]string{
-				"Content-Type": {"application/json"},
-			},
-			Body: resBytes,
-		}, nil
+		res.StatusCode = http.StatusBadGateway
+		res.Error = "failed to parse opencode upstream usage: " + errParse.Error()
+		return res, nil
 	}
 
-	resBytes, _ := json.Marshal(usage)
-	return ManagementResponse{
-		StatusCode: http.StatusOK,
-		Headers: map[string][]string{
-			"Content-Type": {"application/json"},
-		},
-		Body: resBytes,
-	}, nil
+	res.OK = true
+	res.StatusCode = http.StatusOK
+	res.Windows = &usage.Windows
+	res.UpdatedAt = usage.UpdatedAt
+	return res, nil
 }
 
 // extractErrorResponseMessage pulls the "error" field out of a JSON error body.

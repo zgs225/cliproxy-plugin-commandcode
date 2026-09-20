@@ -10,7 +10,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>用量配额 - Command Code + OpenCode Go - CLIProxyAPI</title>
+  <title>用量配额 - CLIProxyAPI</title>
   <style>
     :root {
       --bg-page: #f8fafc;
@@ -215,11 +215,6 @@ const QuotaPageHTML = `<!DOCTYPE html>
         color: #c084fc;
         border-color: rgba(167, 139, 250, 0.45);
       }
-    }
-
-    .brand-subtitle {
-      font-size: 13px;
-      color: var(--text-muted);
     }
 
     .action-group {
@@ -666,12 +661,110 @@ const QuotaPageHTML = `<!DOCTYPE html>
       display: block;
     }
 
-    /* OpenCode card status chip (reuses .status-badge variants) */
-    .oc-status-wrap {
+    /* Command Code tab head: title + plan badge (planBadge moved out of header) */
+    .cc-tab-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      gap: 10px;
+    }
+
+    .cc-tab-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    /* OpenCode multi-key groups: one group per key, 3 compact window rows each */
+    .oc-key-group {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      box-shadow: var(--shadow-sm);
       display: flex;
       flex-direction: column;
-      align-items: flex-end;
-      gap: 6px;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .oc-key-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .oc-key-id {
+      font-size: 13px;
+      font-family: monospace;
+      color: var(--text-muted);
+    }
+
+    .oc-key-body {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .oc-win-row {
+      display: grid;
+      grid-template-columns: 92px 1fr 52px 84px;
+      align-items: center;
+      gap: 12px;
+    }
+
+    @media (max-width: 640px) {
+      .oc-win-row {
+        grid-template-columns: 86px 1fr 48px;
+      }
+      .oc-win-reset {
+        display: none;
+      }
+    }
+
+    .oc-win-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* .progress-track combo class: 8px mini bar, same as .all-grid */
+    .oc-win-bar {
+      height: 8px;
+    }
+
+    .oc-win-pct {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-main);
+      white-space: nowrap;
+      font-feature-settings: "tnum";
+    }
+
+    .oc-win-pct.warn { color: var(--warning); }
+    .oc-win-pct.bad { color: var(--danger); }
+
+    /* .countdown-timer combo class: smaller reset countdown */
+    .oc-win-reset {
+      font-size: 12px;
+    }
+
+    .oc-key-error {
+      font-size: 12px;
+      color: var(--danger);
+      word-break: break-all;
+    }
+
+    .all-key-id {
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    textarea.form-control {
+      resize: vertical;
     }
 
     /* All tab: two provider cards side by side */
@@ -813,11 +906,9 @@ const QuotaPageHTML = `<!DOCTYPE html>
         </div>
         <div>
           <div class="brand-title">
-            用量配额 - Command Code + OpenCode Go
-            <span class="version-tag">v0.3.0</span>
-            <span id="planBadge" class="plan-tag" style="display:none;">Plan: -</span>
+            用量配额
+            <span class="version-tag">v0.4.0</span>
           </div>
-          <div class="brand-subtitle">CLIProxyAPI 实时限额与用量监控 (Command Code + OpenCode Go)</div>
         </div>
       </div>
 
@@ -874,9 +965,9 @@ const QuotaPageHTML = `<!DOCTYPE html>
           <input type="password" id="inputSessionToken" class="form-control" placeholder="覆盖测试: __Secure-commandcode_prod_.session_token" />
         </div>
         <div class="form-group">
-          <label for="inputOpenCodeKey">OpenCode Go API Key (测试覆盖)</label>
-          <input type="password" id="inputOpenCodeKey" class="form-control" placeholder="覆盖测试: sk-..." />
-          <span class="form-hint">仅测试覆盖用：值不持久化，仅当次请求生效</span>
+          <label for="inputOpenCodeKeys">OpenCode Go API Keys (测试覆盖)</label>
+          <textarea id="inputOpenCodeKeys" class="form-control" rows="3" placeholder="每行一个 sk-..."></textarea>
+          <span class="form-hint">每行一个 key；仅当次请求生效，不持久化</span>
         </div>
       </div>
       <div style="margin-top: 14px; display: flex; justify-content: flex-end; gap: 10px;">
@@ -895,6 +986,10 @@ const QuotaPageHTML = `<!DOCTYPE html>
       </div>
 
       <div id="ccContent">
+        <div class="cc-tab-head">
+          <span class="cc-tab-title">Command Code</span>
+          <span id="planBadge" class="plan-tag" style="display:none;">Plan: -</span>
+        </div>
 
     <!-- Overview Metrics -->
     <div class="metrics-grid">
@@ -1035,87 +1130,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
         </div>
         <div id="ocErrorMsg" class="error-card-msg">-</div>
       </div>
-      <div id="ocContent">
-        <div class="metrics-grid">
-          <!-- Rolling 5h Window -->
-          <div id="ocCardRolling" class="quota-card">
-            <div class="quota-card-header">
-              <div>
-                <span class="quota-tag">短期滑动窗口</span>
-                <div class="quota-name">Rolling 5h (5 小时窗口)</div>
-              </div>
-              <div class="oc-status-wrap">
-                <span id="ocStatusRolling" class="status-badge online"><span class="status-dot"></span><span id="ocStatusTextRolling">-</span></span>
-                <div id="ocBadgeRolling" class="quota-percent-badge">- %</div>
-              </div>
-            </div>
-
-            <div class="progress-track">
-              <div id="ocBarRolling" class="progress-bar"></div>
-            </div>
-
-            <div class="reset-box">
-              <div class="reset-label">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                <span>重置倒计时</span>
-              </div>
-              <div id="ocTimerRolling" class="countdown-timer">-</div>
-            </div>
-          </div>
-
-          <!-- Weekly Window -->
-          <div id="ocCardWeekly" class="quota-card">
-            <div class="quota-card-header">
-              <div>
-                <span class="quota-tag" style="color:#8b5cf6; background:rgba(139,92,246,0.12)">周度窗口</span>
-                <div class="quota-name">Weekly (每周限制)</div>
-              </div>
-              <div class="oc-status-wrap">
-                <span id="ocStatusWeekly" class="status-badge online"><span class="status-dot"></span><span id="ocStatusTextWeekly">-</span></span>
-                <div id="ocBadgeWeekly" class="quota-percent-badge">- %</div>
-              </div>
-            </div>
-
-            <div class="progress-track">
-              <div id="ocBarWeekly" class="progress-bar"></div>
-            </div>
-
-            <div class="reset-box">
-              <div class="reset-label">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                <span>重置倒计时</span>
-              </div>
-              <div id="ocTimerWeekly" class="countdown-timer">-</div>
-            </div>
-          </div>
-
-          <!-- Monthly Window -->
-          <div id="ocCardMonthly" class="quota-card">
-            <div class="quota-card-header">
-              <div>
-                <span class="quota-tag" style="color:#f59e0b; background:rgba(245,158,11,0.12)">月度窗口</span>
-                <div class="quota-name">Monthly (月度窗口)</div>
-              </div>
-              <div class="oc-status-wrap">
-                <span id="ocStatusMonthly" class="status-badge online"><span class="status-dot"></span><span id="ocStatusTextMonthly">-</span></span>
-                <div id="ocBadgeMonthly" class="quota-percent-badge">- %</div>
-              </div>
-            </div>
-
-            <div class="progress-track">
-              <div id="ocBarMonthly" class="progress-bar"></div>
-            </div>
-
-            <div class="reset-box">
-              <div class="reset-label">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                <span>重置倒计时</span>
-              </div>
-              <div id="ocTimerMonthly" class="countdown-timer">-</div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <div id="ocContent"></div>
     </div>
     <!-- /Tab: OpenCode Go -->
 
@@ -1163,7 +1178,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
       const settingsDrawer = document.getElementById("settingsDrawer");
       const inputMgmtKey = document.getElementById("inputMgmtKey");
       const inputSessionToken = document.getElementById("inputSessionToken");
-      const inputOpenCodeKey = document.getElementById("inputOpenCodeKey");
+      const inputOpenCodeKeys = document.getElementById("inputOpenCodeKeys");
       const alertBox = document.getElementById("alertBox");
       const alertMsg = document.getElementById("alertMsg");
       const statusBadge = document.getElementById("statusBadge");
@@ -1215,31 +1230,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
       const timerWeekly = document.getElementById("timerWeekly");
       const lastUpdated = document.getElementById("lastUpdated");
 
-      // OpenCode Go card elements
-      const ocCardRolling = document.getElementById("ocCardRolling");
-      const ocBadgeRolling = document.getElementById("ocBadgeRolling");
-      const ocBarRolling = document.getElementById("ocBarRolling");
-      const ocTimerRolling = document.getElementById("ocTimerRolling");
-      const ocStatusRolling = document.getElementById("ocStatusRolling");
-      const ocStatusTextRolling = document.getElementById("ocStatusTextRolling");
-
-      const ocCardWeekly = document.getElementById("ocCardWeekly");
-      const ocBadgeWeekly = document.getElementById("ocBadgeWeekly");
-      const ocBarWeekly = document.getElementById("ocBarWeekly");
-      const ocTimerWeekly = document.getElementById("ocTimerWeekly");
-      const ocStatusWeekly = document.getElementById("ocStatusWeekly");
-      const ocStatusTextWeekly = document.getElementById("ocStatusTextWeekly");
-
-      const ocCardMonthly = document.getElementById("ocCardMonthly");
-      const ocBadgeMonthly = document.getElementById("ocBadgeMonthly");
-      const ocBarMonthly = document.getElementById("ocBarMonthly");
-      const ocTimerMonthly = document.getElementById("ocTimerMonthly");
-      const ocStatusMonthly = document.getElementById("ocStatusMonthly");
-      const ocStatusTextMonthly = document.getElementById("ocStatusTextMonthly");
-
-      const ocTimerEls = { rolling: ocTimerRolling, weekly: ocTimerWeekly, monthly: ocTimerMonthly };
-
-      let monthlyTargetTime = null;
+      const lastUpdated = document.getElementById("lastUpdated");
       let fiveHourTargetTime = null;
       let weeklyTargetTime = null;
       let timerInterval = null;
@@ -1250,7 +1241,8 @@ const QuotaPageHTML = `<!DOCTYPE html>
         opencode: { level: "unknown", err: null, data: null }
       };
       let activeTab = "commandcode";
-      let ocTargets = { rolling: null, weekly: null, monthly: null };
+      // Multi-key countdown targets: [{el, target}] across all keys x 3 windows
+      let ocTargets = [];
 
       function getStoredManagementKey() {
         if (inputMgmtKey.value.trim()) {
@@ -1404,9 +1396,10 @@ const QuotaPageHTML = `<!DOCTYPE html>
         if (weeklyTargetTime) {
           timerWeekly.textContent = formatCountdown(weeklyTargetTime);
         }
-        for (const key in ocTargets) {
-          if (ocTargets[key]) {
-            ocTimerEls[key].textContent = formatCountdown(ocTargets[key]);
+        for (let i = 0; i < ocTargets.length; i++) {
+          const t = ocTargets[i];
+          if (t && t.el) {
+            t.el.textContent = t.target ? formatCountdown(t.target) : "-";
           }
         }
       }
@@ -1505,44 +1498,95 @@ const QuotaPageHTML = `<!DOCTYPE html>
       function renderOpencode(data) {
         providerState.opencode.err = null;
         providerState.opencode.data = data;
+
+        // 多 key 契约：keys[] 为空/缺失视为 provider 级失败，走全局错误卡片
+        const keys = data && Array.isArray(data.keys) ? data.keys : [];
+        if (keys.length === 0) {
+          showProviderError("opencode", (data && data.error) || "OpenCode 未返回任何 key 数据");
+          return;
+        }
+
         ocContent.style.display = "";
         ocErrorCard.classList.remove("show");
+        ocTargets = [];
 
-        const windows = data.windows || {};
-        const defs = [
-          { key: "rolling", card: ocCardRolling, badge: ocBadgeRolling, bar: ocBarRolling, timer: ocTimerRolling, chip: ocStatusRolling, chipText: ocStatusTextRolling, w: windows.rolling },
-          { key: "weekly", card: ocCardWeekly, badge: ocBadgeWeekly, bar: ocBarWeekly, timer: ocTimerWeekly, chip: ocStatusWeekly, chipText: ocStatusTextWeekly, w: windows.weekly },
-          { key: "monthly", card: ocCardMonthly, badge: ocBadgeMonthly, bar: ocBarMonthly, timer: ocTimerMonthly, chip: ocStatusMonthly, chipText: ocStatusTextMonthly, w: windows.monthly }
+        const WIN_DEFS = [
+          { name: "Rolling 5h", key: "rolling" },
+          { name: "Weekly", key: "weekly" },
+          { name: "Monthly", key: "monthly" }
         ];
-
-        let worst = "online";
         const rank = { online: 0, warning: 1, exceeded: 2 };
+        // provider 级别 = 全部 key 最差（失败 key 按 exceeded 视觉计入）
+        let worst = "online";
+        let html = "";
 
-        defs.forEach(function (d) {
-          const w = d.w || {};
-          const pct = clampPercent(w.percent);
-          const level = levelOf(pct, w.exceeded, w.status);
-          if (rank[level] > rank[worst]) worst = level;
+        keys.forEach(function (k) {
+          const keyId = esc(k.key_id || "***");
+          if (k.ok && k.windows) {
+            const windows = k.windows;
+            let keyWorst = "online";
+            let rowsHtml = "";
 
-          d.badge.textContent = pct === null ? "- %" : pct.toFixed(1) + " %";
-          d.bar.style.width = (pct === null ? 0 : pct) + "%";
-          d.bar.className = "progress-bar" + (level === "exceeded" ? " danger" : level === "warning" ? " warning" : "");
-          d.card.className = "quota-card" + (level === "exceeded" ? " is-exceeded" : "");
-          d.chip.className = "status-badge " + level;
-          d.chipText.textContent = level === "exceeded" ? "超限" : level === "warning" ? "紧张" : "正常";
+            WIN_DEFS.forEach(function (def) {
+              const w = windows[def.key] || {};
+              const pct = clampPercent(w.percent);
+              const level = levelOf(pct, w.exceeded, w.status);
+              if (rank[level] > rank[keyWorst]) keyWorst = level;
+              if (rank[level] > rank[worst]) worst = level;
 
-          // reset_at 优先；缺失/不可解析时回退 reset_in_seconds；都没有则显示 "-"
-          let target = null;
-          if (w.reset_at) {
-            const t = new Date(w.reset_at);
-            if (!isNaN(t.getTime())) target = t;
+              // reset_at 优先；缺失/不可解析时回退 reset_in_seconds；皆无显示 "-"
+              let target = null;
+              if (w.reset_at) {
+                const t = new Date(w.reset_at);
+                if (!isNaN(t.getTime())) target = t;
+              }
+              if (!target && w.reset_in_seconds > 0) {
+                target = new Date(Date.now() + Number(w.reset_in_seconds) * 1000);
+              }
+
+              const pctText = pct === null ? "-" : Math.round(pct) + "%";
+              const pctCls = level === "exceeded" ? " bad" : pct !== null && pct >= 80 ? " warn" : "";
+              const barCls = level === "exceeded" ? " danger" : level === "warning" ? " warning" : "";
+
+              rowsHtml += '<div class="oc-win-row">' +
+                '<span class="oc-win-name">' + def.name + '</span>' +
+                '<div class="progress-track oc-win-bar"><div class="progress-bar' + barCls + '" style="width:' + (pct === null ? 0 : pct) + '%"></div></div>' +
+                '<span class="oc-win-pct' + pctCls + '">' + pctText + '</span>' +
+                '<span class="oc-win-reset countdown-timer">-</span>' +
+                '</div>';
+              ocTargets.push({ el: null, target: target });
+            });
+
+            const chipText = keyWorst === "exceeded" ? "超限" : keyWorst === "warning" ? "紧张" : "正常";
+            html += '<div class="oc-key-group">' +
+              '<div class="oc-key-head"><span class="oc-key-id">' + keyId + '</span>' +
+              '<span class="oc-key-chip status-badge ' + keyWorst + '"><span class="status-dot"></span><span>' + chipText + '</span></span></div>' +
+              '<div class="oc-key-body">' + rowsHtml + '</div>' +
+              '</div>';
+          } else {
+            // 失败 key 无 windows 字段：只渲染 key 头 + 错误行
+            if (rank.exceeded > rank[worst]) worst = "exceeded";
+            const is401 = k.status_code === 401;
+            const label = is401 ? "凭据无效" : "查询错误";
+            const statusPart = k.status_code ? "上游 " + esc(String(k.status_code)) : "查询失败";
+            const errTail = k.error ? "：" + esc(k.error) : "";
+            const tip = is401 ? "，请检查该 key 或从配置中移除" : "";
+            html += '<div class="oc-key-group">' +
+              '<div class="oc-key-head"><span class="oc-key-id">' + keyId + '</span>' +
+              '<span class="oc-key-chip status-badge exceeded"><span class="status-dot"></span><span>' + label + '</span></span></div>' +
+              '<div class="oc-key-error">' + label + '（' + statusPart + '）' + errTail + tip + '</div>' +
+              '</div>';
           }
-          if (!target && w.reset_in_seconds > 0) {
-            target = new Date(Date.now() + Number(w.reset_in_seconds) * 1000);
-          }
-          ocTargets[d.key] = target;
-          if (!target) d.timer.textContent = "-";
         });
+
+        ocContent.innerHTML = html;
+
+        // 绑定多 key x 3 窗口的倒计时元素（与 ocTargets 顺序一致）
+        const resetEls = ocContent.querySelectorAll(".oc-win-reset");
+        for (let i = 0; i < ocTargets.length; i++) {
+          if (resetEls[i]) ocTargets[i].el = resetEls[i];
+        }
+        updateTimers();
 
         setProviderStatus("opencode", worst);
       }
@@ -1600,19 +1644,32 @@ const QuotaPageHTML = `<!DOCTYPE html>
           allBodyOpencode.innerHTML = '<div class="error-card-title">OpenCode Go 查询失败</div><div class="error-card-msg">' + esc(oc.err) + '</div>';
         } else if (oc.data) {
           const data = oc.data;
-          const windows = data.windows || {};
-          const defs = [
-            { name: "Rolling 5h", w: windows.rolling },
-            { name: "Weekly", w: windows.weekly },
-            { name: "Monthly", w: windows.monthly }
-          ];
+          // 多 key 契约：逐 key 紧凑列表（key_id + 最差窗口 percent + miniBar）
+          const keys = Array.isArray(data.keys) ? data.keys : [];
           let html = "";
-          defs.forEach(function (d) {
-            const win = d.w || {};
-            const pct = clampPercent(win.percent);
-            const level = levelOf(pct, win.exceeded, win.status);
-            html += summaryRow(d.name, pct === null ? "-" : pct.toFixed(1) + "%") + miniBar(pct, level);
+          keys.forEach(function (k) {
+            const keyId = '<span class="all-key-id">' + esc(k.key_id || "***") + '</span>';
+            if (k.ok && k.windows) {
+              const wins = [k.windows.rolling || {}, k.windows.weekly || {}, k.windows.monthly || {}];
+              let worstPct = null;
+              let worstLevel = "online";
+              wins.forEach(function (w) {
+                const pct = clampPercent(w.percent);
+                const level = levelOf(pct, w.exceeded, w.status);
+                if (worstPct === null || (pct !== null && pct > worstPct) || level === "exceeded") {
+                  worstPct = pct === null ? 0 : pct;
+                  worstLevel = level;
+                }
+              });
+              html += summaryRow(keyId, worstPct === null ? "-" : Math.round(worstPct) + "%") + miniBar(worstPct, worstLevel);
+            } else {
+              const label = k.status_code === 401 ? "凭据无效" : "查询错误";
+              html += summaryRow(keyId, '<span class="error-card-msg" style="font-size:12px">' + label + '</span>');
+            }
           });
+          if (!html) {
+            html = '<div class="all-summary-value">无 key 数据</div>';
+          }
           allBadgeOpencode.className = "status-badge " + badgeVisualClass(oc.level);
           allBadgeTextOpencode.textContent = BADGE_TEXT[oc.level] || "-";
           allBodyOpencode.innerHTML = html;
@@ -1648,7 +1705,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
 
         const mgmtKey = getStoredManagementKey();
         const overrideToken = inputSessionToken.value.trim();
-        const overrideOpenCodeKey = inputOpenCodeKey.value.trim();
+        const overrideOpenCodeKeys = inputOpenCodeKeys.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
 
         const headers = {
           "Accept": "application/json",
@@ -1665,8 +1722,9 @@ const QuotaPageHTML = `<!DOCTYPE html>
         if (overrideToken) {
           bodyObj.session_token = overrideToken;
         }
-        if (overrideOpenCodeKey) {
-          bodyObj.opencode_api_key = overrideOpenCodeKey;
+        // 非空才进 body：list 优先（后端仍接受旧 scalar 字段，前端不再发送）
+        if (overrideOpenCodeKeys.length > 0) {
+          bodyObj.opencode_api_keys = overrideOpenCodeKeys;
         }
 
         try {

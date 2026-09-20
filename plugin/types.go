@@ -294,10 +294,35 @@ type OpenCodeFormattedUsageResponse struct {
 	Error     string                   `json:"error,omitempty"`
 }
 
+// OpenCodeKeyResult is the per-key outcome of a multi-key OpenCode Go query
+// (v0.4.0). Windows is a pointer so failed keys omit the field entirely
+// instead of marshaling a zero-value struct with "status":"" noise.
+type OpenCodeKeyResult struct {
+	KeyID      string                    `json:"key_id"`
+	OK         bool                      `json:"ok"`
+	Windows    *OpenCodeFormattedWindows `json:"windows,omitempty"`
+	StatusCode int                       `json:"status_code"`
+	Error      string                    `json:"error,omitempty"`
+	UpdatedAt  string                    `json:"updated_at,omitempty"`
+}
+
+// OpenCodeMultiKeyResponse is the multi-key OpenCode Go usage payload returned
+// by /plugins/commandcode/opencode/usage and the opencode field of /all.
+// Top-level Error is non-empty only when no key is configured at all.
+type OpenCodeMultiKeyResponse struct {
+	OK        bool                `json:"ok"`
+	Provider  string              `json:"provider"` // "opencode_go"
+	Keys      []OpenCodeKeyResult `json:"keys"`
+	UpdatedAt string              `json:"updated_at"`
+	Error     string              `json:"error,omitempty"`
+}
+
 // AllUsageResponse aggregates both providers for /plugins/commandcode/all.
 // Partial failure semantics: each provider's payload is present only on success;
-// failures are reported in Errors. CommandCode/OpenCode carry the raw JSON of the
-// respective FormattedUsageResponse / OpenCodeFormattedUsageResponse.
+// failures are reported in Errors. CommandCode carries the raw JSON of
+// FormattedUsageResponse; OpenCode carries the raw JSON of
+// OpenCodeMultiKeyResponse (v0.4.0 breaking change: no longer the single-key
+// OpenCodeFormattedUsageResponse).
 type AllUsageResponse struct {
 	OK          bool              `json:"ok"` // at least one provider succeeded
 	CommandCode json.RawMessage   `json:"commandcode,omitempty"`

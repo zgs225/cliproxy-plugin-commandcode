@@ -134,8 +134,11 @@ plugins:
       priority: 1
       session_token: "YOUR_COMMANDCODE_SESSION_TOKEN" # 支持纯 token 或完整 Cookie 字符串
       api_base: "https://api.commandcode.ai" # 可选，默认为官方接口
-      opencode_api_key: "sk-YOUR_OPENCODE_GO_API_KEY" # v0.3.0+ 可选，OpenCode Go 用量查询
-      opencode_api_base: "https://opencode.ai/zen/go/v1" # v0.3.0+ 可选，默认为官方接口
+      opencode_api_key: "sk-YOUR_OPENCODE_GO_API_KEY" # 可选（单 key 兑底，v0.3.0+）
+      # v0.4.0+ 多 key：list 优先于单 key 字段，每 key 独立账号独立配额窗口
+      opencode_api_keys:
+        - "sk-KEY1..."
+        - "sk-KEY2..."
 ```
 
 ---
@@ -212,50 +215,70 @@ plugins:
 
 - **端点**：`GET /v0/management/plugins/commandcode/opencode/usage`（认证同上，仅读插件配置；凭据覆盖走 POST）
 - **端点**：`POST /v0/management/plugins/commandcode/opencode/usage`
-- **POST 请求体**：
+- **POST 请求体**（多 key 数组优先；scalar 为 v0.3.0 兼容）：
 
 ```json
-{ "opencode_api_key": "sk-YOUR_TEMPORARY_KEY" }
+{ "opencode_api_keys": ["sk-KEY1", "sk-KEY2"] }
 ```
 
-- **响应示例**：
+- **响应（v0.4.0+，逐 key 结果数组）**：
 
 ```json
 {
   "ok": true,
   "provider": "opencode_go",
-  "windows": {
-    "rolling": { "status": "ok", "percent": 4, "exceeded": false,
-                 "reset_at": "2026-09-17T06:58:53Z", "reset_in_seconds": 2520 },
-    "weekly":  { "status": "ok", "percent": 46, "exceeded": false,
-                 "reset_at": "2026-09-21T00:00:00Z", "reset_in_seconds": 259200 },
-    "monthly": { "status": "ok", "percent": 23, "exceeded": false,
-                 "reset_at": "2026-10-14T09:13:49Z", "reset_in_seconds": 1728000 }
-  },
-  "updated_at": "2026-09-16T12:00:00Z"
+  "keys": [
+    {
+      "key_id": "sk-L…KqYB",
+      "ok": true,
+      "windows": {
+        "rolling": { "status": "ok", "percent": 4, "exceeded": false,
+                     "reset_at": "2026-09-17T06:58:53Z", "reset_in_seconds": 2520 },
+        "weekly":  { "status": "ok", "percent": 46, "exceeded": false,
+                     "reset_at": "2026-09-21T00:00:00Z", "reset_in_seconds": 259200 },
+        "monthly": { "status": "ok", "percent": 23, "exceeded": false,
+                     "reset_at": "2026-10-14T09:13:49Z", "reset_in_seconds": 1728000 }
+      },
+      "updated_at": "2026-09-16T12:00:00Z",
+      "status_code": 200
+    },
+    {
+      "key_id": "sk-U…PNHn",
+      "ok": false,
+      "updated_at": "2026-09-16T12:00:01Z",
+      "status_code": 401,
+      "error": "opencode upstream returned 401: check opencode_api_key"
+    }
+  ],
+  "updated_at": "2026-09-16T12:00:01Z"
 }
 ```
+
+- `key_id` 为服务端脱敏标识（前4+…+后4），原始 key 永不出现在响应中；失败 key 无 `windows` 字段，单 key 失败不影响其他 key。
+- **HTTP 状态**：≥1 key 成功 → 200；key 全配但全失败 → 502；未配置任何 key → 400。
 
 ### 5. 管理 API: 聚合查询 (`all`)
 
 - **端点**：`GET /v0/management/plugins/commandcode/all`（仅读插件配置）
 - **端点**：`POST /v0/management/plugins/commandcode/all`
-- **POST 请求体**（可只带其一）：
+- **POST 请求体**（可只带其一；多 key 覆盖为数组）：
 
 ```json
-{ "session_token": "...", "opencode_api_key": "sk-..." }
+{ "session_token": "...", "opencode_api_keys": ["sk-KEY1", "sk-KEY2"] }
 ```
 
-- **部分失败语义**：HTTP 200 表示至少一个 provider 成功；失败 provider 记入 `errors`，其响应字段（`commandcode`/`opencode`）整个省略；全失败且为本地凭据缺失 → 400，全失败且为上游错误 → 502。
+- **部分失败语义**：HTTP 200 表示至少一个 provider（Command Code 或 ≥1 个 OpenCode key）成功；失败 provider 记入 `errors`，其响应字段整个省略；全失败且为本地凭据缺失 → 400，全失败且为上游错误 → 502。
 
 ```json
 {
   "ok": true,
   "commandcode": { "ok": true, "plan": {...}, "credits": {...}, "window_limits": {...}, "updated_at": "..." },
-  "opencode": { "ok": true, "provider": "opencode_go", "windows": {...}, "updated_at": "..." },
+  "opencode": { "ok": true, "provider": "opencode_go", "keys": [ ...同上... ], "updated_at": "..." },
   "updated_at": "2026-09-16T12:00:00Z"
 }
 ```
+
+> **v0.4.0 breaking note**：`opencode` 字段从单 key 对象变为 `{ok, provider, keys[], updated_at}` 多 key 结构（keys[].windows 为 v0.3.0 原窗口结构）。唯一消费方是同仓 QuotaCard 资源页，已同版本同步更新。
 
 ---
 
@@ -275,9 +298,10 @@ plugins:
 | `window_limits.five_hour.reset_in_seconds`| `int64` | 距离 5 小时窗口重置的剩余秒数 |
 | `window_limits.weekly.*` | - | 每周限额对应指标（结构同 5 小时窗口） |
 | `windows.<rolling\|weekly\|monthly>.status` | `string` | OpenCode Go 窗口状态（`"ok"`/上游其他值，未知值不报错） |
-| `windows.<...>.percent` | `float64` | OpenCode Go 窗口使用百分比（0-100，钳制） |
-| `windows.<...>.exceeded` | `bool` | `percent >= 100` 或上游 `status == "exceeded"` |
-| `windows.<...>.reset_at` / `reset_in_seconds` | `string` / `int64` | OpenCode Go 窗口重置时间（解析失败优雅降级为空/0） |
+| `keys[].key_id` | `string` | 服务端脱敏 key 标识（前4+…+后4），原始 key 不出响应 |
+| `keys[].ok` | `bool` | 该 key 查询是否成功（单 key 401 隔离） |
+| `keys[].windows.<...>` | `object` | 成功 key 的三窗口指标（结构同上；失败 key 无此字段） |
+| `keys[].status_code` / `error` | `int` / `string` | 该 key 上游 HTTP 状态与失败原因 |
 
 ---
 

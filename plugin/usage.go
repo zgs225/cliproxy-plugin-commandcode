@@ -224,6 +224,31 @@ func clampOpenCodePercent(p float64) float64 {
 	return math.Round(p*100) / 100
 }
 
+// MaskAPIKey masks an OpenCode Go API key for display: first 4 + "…" + last 4
+// characters (e.g. "sk-L…KqYB"). Keys shorter than 8 characters are fully
+// masked as "***"; an empty key masks to "".
+func MaskAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) < 8 {
+		return "***"
+	}
+	return key[:4] + "…" + key[len(key)-4:]
+}
+
+// QueryOpenCodeKeys queries OpenCode Go usage for each key sequentially and
+// returns one typed result per key, in input order. A single key's failure is
+// recorded only in that key's result and never aborts the loop.
+func QueryOpenCodeKeys(ctx context.Context, apiBase string, keys []string, hostCallbackID string) []OpenCodeKeyResult {
+	results := make([]OpenCodeKeyResult, 0, len(keys))
+	for _, key := range keys {
+		res, _ := queryOpenCodeKey(ctx, apiBase, key, hostCallbackID)
+		results = append(results, res)
+	}
+	return results
+}
+
 // ParseAndFormatUsage parses upstream credits JSON into structured usage metrics.
 // summary (optional) carries the billing-period usage totals used to derive the monthly window.
 func ParseAndFormatUsage(raw []byte, summary *UpstreamUsageSummaryResponse, now time.Time) (*FormattedUsageResponse, error) {

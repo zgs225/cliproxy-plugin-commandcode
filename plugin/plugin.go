@@ -13,7 +13,7 @@ import (
 const (
 	PluginID       = "commandcode"
 	PluginName     = "commandcode"
-	PluginVersion  = "0.3.0"
+	PluginVersion  = "0.4.0"
 	PluginAuthor   = "zgs225"
 	PluginRepo     = "https://github.com/zgs225/cliproxy-plugin-commandcode"
 	PluginLogo     = "https://raw.githubusercontent.com/zgs225/cliproxy-plugin-commandcode/main/assets/logo.svg"
@@ -23,10 +23,11 @@ const (
 // PluginConfig holds the runtime configuration parsed from YAML.
 type PluginConfig struct {
 	mu              sync.RWMutex
-	SessionToken    string `yaml:"session_token" json:"session_token"`
-	APIBase         string `yaml:"api_base" json:"api_base"`
-	OpenCodeAPIKey  string `yaml:"opencode_api_key" json:"opencode_api_key"`
-	OpenCodeAPIBase string `yaml:"opencode_api_base" json:"opencode_api_base"`
+	SessionToken    string   `yaml:"session_token" json:"session_token"`
+	APIBase         string   `yaml:"api_base" json:"api_base"`
+	OpenCodeAPIKey  string   `yaml:"opencode_api_key" json:"opencode_api_key"`
+	OpenCodeAPIKeys []string `yaml:"opencode_api_keys" json:"opencode_api_keys"`
+	OpenCodeAPIBase string   `yaml:"opencode_api_base" json:"opencode_api_base"`
 }
 
 // UpdateFromYAML updates the configuration from raw YAML bytes.
@@ -35,10 +36,11 @@ func (c *PluginConfig) UpdateFromYAML(raw []byte) error {
 		return nil
 	}
 	var tmp struct {
-		SessionToken    string `yaml:"session_token"`
-		APIBase         string `yaml:"api_base"`
-		OpenCodeAPIKey  string `yaml:"opencode_api_key"`
-		OpenCodeAPIBase string `yaml:"opencode_api_base"`
+		SessionToken    string   `yaml:"session_token"`
+		APIBase         string   `yaml:"api_base"`
+		OpenCodeAPIKey  string   `yaml:"opencode_api_key"`
+		OpenCodeAPIKeys []string `yaml:"opencode_api_keys"`
+		OpenCodeAPIBase string   `yaml:"opencode_api_base"`
 	}
 	if err := yaml.Unmarshal(raw, &tmp); err != nil {
 		return fmt.Errorf("unmarshal config_yaml: %w", err)
@@ -57,6 +59,15 @@ func (c *PluginConfig) UpdateFromYAML(raw []byte) error {
 		// OpenCode API key is a plain Bearer token; do not run it through
 		// ExtractSessionToken (that is Command Code cookie specific).
 		c.OpenCodeAPIKey = strings.TrimSpace(tmp.OpenCodeAPIKey)
+	}
+	// Merge rule: opencode_api_keys (YAML list) wins when non-empty after
+	// trimming/dedup; otherwise opencode_api_key (scalar) degrades to a
+	// single-key list; both empty means no keys.
+	c.OpenCodeAPIKeys = normalizeOpenCodeKeys(tmp.OpenCodeAPIKeys)
+	if len(c.OpenCodeAPIKeys) == 0 {
+		if single := strings.TrimSpace(tmp.OpenCodeAPIKey); single != "" {
+			c.OpenCodeAPIKeys = []string{single}
+		}
 	}
 	if tmp.OpenCodeAPIBase != "" {
 		c.OpenCodeAPIBase = strings.TrimRight(tmp.OpenCodeAPIBase, "/")
@@ -91,11 +102,46 @@ func (c *PluginConfig) GetAPIBase() string {
 	return c.APIBase
 }
 
-// GetOpenCodeAPIKey safely returns the OpenCode Go API key.
+// GetOpenCodeAPIKey safely returns the single configured OpenCode Go API key
+// (scalar opencode_api_key field; kept for backward compatibility).
 func (c *PluginConfig) GetOpenCodeAPIKey() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.OpenCodeAPIKey
+}
+
+// GetOpenCodeAPIKeys safely returns the configured OpenCode Go API keys.
+// The list field wins; when it is empty the scalar OpenCodeAPIKey degrades
+// to a single-key list (same merge rule as UpdateFromYAML). The returned
+// slice is a copy; callers may not mutate it.
+func (c *PluginConfig) GetOpenCodeAPIKeys() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.OpenCodeAPIKeys) > 0 {
+		out := make([]string, len(c.OpenCodeAPIKeys))
+		copy(out, c.OpenCodeAPIKeys)
+		return out
+	}
+	if c.OpenCodeAPIKey != "" {
+		return []string{c.OpenCodeAPIKey}
+	}
+	return nil
+}
+
+// normalizeOpenCodeKeys trims each key, drops empties and dedups while
+// preserving the original order.
+func normalizeOpenCodeKeys(keys []string) []string {
+	out := make([]string, 0, len(keys))
+	seen := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		if k == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	return out
 }
 
 // GetOpenCodeAPIBase safely returns the OpenCode Go API base URL,
@@ -181,7 +227,12 @@ func (p *Plugin) handleRegister(raw []byte) ([]byte, error) {
 				{
 					Name:        "opencode_api_key",
 					Type:        "string",
-					Description: "OpenCode Go API key (Bearer token used for https://opencode.ai/zen/go/v1/usage)",
+					Description: "OpenCode Go API key (single Bearer token; degraded path when opencode_api_keys is unset)",
+				},
+				{
+					Name:        "opencode_api_keys",
+					Type:        "string",
+					Description: "OpenCode Go API keys as a YAML list (e.g. opencode_api_keys: [\"sk-KEY1\", \"sk-KEY2\"]); takes precedence over opencode_api_key",
 				},
 				{
 					Name:        "opencode_api_base",

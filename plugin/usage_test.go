@@ -642,6 +642,110 @@ func TestFetchOpenCodeUsageRaw_UpstreamNon200(t *testing.T) {
 	}
 }
 
+func TestMaskAPIKey(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		want string
+	}{
+		{"empty", "", ""},
+		{"normal key", "sk-LongExampleKqYB", "sk-L…KqYB"},
+		{"exactly 8 chars", "12345678", "1234…5678"},
+		{"7 chars fully masked", "1234567", "***"},
+		{"1 char", "x", "***"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MaskAPIKey(tt.key); got != tt.want {
+				t.Errorf("MaskAPIKey(%q) = %q, want %q", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
+// Double-key isolation: one key succeeds, the other gets a 401 — the failure
+// must be contained in its own result, must not abort the loop, and the raw
+// key must never appear in any result field.
+func TestQueryOpenCodeKeys_IsolationAndOrder(t *testing.T) {
+	var authOrder []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authOrder = append(authOrder, r.Header.Get("Authorization"))
+		switch r.Header.Get("Authorization") {
+		case "Bearer sk-good-AAAA":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(mockOpencodeUsageJSON))
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"invalid api key"}`))
+		}
+	}))
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	keys := []string{"sk-good-AAAA", "sk-bad-BBBB"}
+	results := QueryOpenCodeKeys(context.Background(), ts.URL, keys, "")
+
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(results))
+	}
+
+	// Order preserved: requests issued in input order.
+	if len(authOrder) != 2 || authOrder[0] != "Bearer sk-good-AAAA" || authOrder[1] != "Bearer sk-bad-BBBB" {
+		t.Errorf("request order = %v, want sequential input order", authOrder)
+	}
+
+	ok := results[0]
+	if !ok.OK || ok.StatusCode != http.StatusOK {
+		t.Errorf("results[0] = %+v, want OK=true status=200", ok)
+	}
+	if ok.Windows == nil {
+		t.Fatal("results[0].Windows = nil, want non-nil on success")
+	}
+	if ok.Windows.Rolling.Percent != 4 || ok.Windows.Weekly.Percent != 46 || ok.Windows.Monthly.Percent != 23 {
+		t.Errorf("results[0] percents = %v/%v/%v, want 4/46/23",
+			ok.Windows.Rolling.Percent, ok.Windows.Weekly.Percent, ok.Windows.Monthly.Percent)
+	}
+	if ok.KeyID != MaskAPIKey("sk-good-AAAA") {
+		t.Errorf("results[0].KeyID = %q, want masked id %q", ok.KeyID, MaskAPIKey("sk-good-AAAA"))
+	}
+
+	bad := results[1]
+	if bad.OK {
+		t.Errorf("results[1].OK = true, want false (401 must not abort the loop)")
+	}
+	if bad.Windows != nil {
+		t.Errorf("results[1].Windows = %+v, want nil on failure", bad.Windows)
+	}
+	if bad.StatusCode != http.StatusUnauthorized {
+		t.Errorf("results[1].StatusCode = %d, want 401", bad.StatusCode)
+	}
+	if !strings.Contains(bad.Error, "opencode upstream returned 401") {
+		t.Errorf("results[1].Error = %q, want it to mention the upstream 401", bad.Error)
+	}
+
+	// Raw keys must never leak into any serialized result field.
+	raw, _ := json.Marshal(results)
+	if strings.Contains(string(raw), "sk-good-AAAA") || strings.Contains(string(raw), "sk-bad-BBBB") {
+		t.Errorf("serialized results leak a raw key: %s", string(raw))
+	}
+}
+
+func TestQueryOpenCodeKeys_EmptyKeyInList(t *testing.T) {
+	SetHostCaller(nil)
+	results := QueryOpenCodeKeys(context.Background(), "", []string{""}, "")
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].OK || results[0].StatusCode != http.StatusBadRequest {
+		t.Errorf("results[0] = %+v, want local 400 result", results[0])
+	}
+}
+
 func TestFetchOpenCodeUsageRaw_HostCaller(t *testing.T) {
 	mockResponsePayload := []byte(`{"usage":{"rolling":{"status":"ok","percent":7,"resetsAt":"2026-09-17T06:58:53Z"}}}`)
 
