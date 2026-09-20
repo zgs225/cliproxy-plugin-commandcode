@@ -918,7 +918,7 @@ const QuotaPageHTML = `<!DOCTYPE html>
         <div>
           <div class="brand-title">
             用量配额
-            <span class="version-tag">v0.4.3</span>
+            <span class="version-tag">v0.4.4</span>
           </div>
         </div>
       </div>
@@ -1625,12 +1625,43 @@ const QuotaPageHTML = `<!DOCTYPE html>
           });
           allBadgeCommandcode.className = "status-badge " + badgeVisualClass(cc.level);
           allBadgeTextCommandcode.textContent = BADGE_TEXT[cc.level] || "-";
+          // Plan + 三个限额窗口（百分比/进度条/重置时间），行结构与 OpenCode 卡片一致，
+          // 倒计时走 data-reset-at/data-reset-secs 属性，由 updateTimers() 统一刷新
+          const ccWins = [
+            { name: "Rolling 5h", o: limits.five_hour || {} },
+            { name: "Weekly", o: limits.weekly || {} },
+            { name: "Monthly", o: limits.monthly || {} }
+          ];
+          let ccRows = "";
+          ccWins.forEach(function (d) {
+            const w = d.o;
+            const pct = clampPercent(w.percentage);
+            const level = levelOf(pct, w.exceeded, "");
+            let resetAt = "";
+            let resetSecs = "";
+            if (w.reset_at) {
+              const t = new Date(w.reset_at);
+              if (!isNaN(t.getTime())) resetAt = t.toISOString();
+            }
+            if (!resetAt && w.reset_in_seconds > 0) {
+              resetSecs = String(w.reset_in_seconds);
+            }
+            const resetAttr = resetAt
+              ? " data-reset-at=\"" + esc(resetAt) + "\""
+              : (resetSecs ? " data-reset-secs=\"" + esc(resetSecs) + "\"" : "");
+            const pctText = pct === null ? "-" : Math.round(pct) + "%";
+            const pctCls = level === "exceeded" ? " bad" : pct !== null && pct >= 80 ? " warn" : "";
+            const barCls = level === "exceeded" ? " danger" : level === "warning" ? " warning" : "";
+            ccRows += '<div class="oc-win-row">' +
+              '<span class="oc-win-name">' + d.name + '</span>' +
+              '<div class="progress-track oc-win-bar"><div class="progress-bar' + barCls + '" style="width:' + (pct === null ? 0 : pct) + '%"></div></div>' +
+              '<span class="oc-win-pct' + pctCls + '">' + pctText + '</span>' +
+              '<span class="oc-win-reset countdown-timer"' + resetAttr + '>-</span>' +
+              '</div>';
+          });
           allBodyCommandcode.innerHTML =
             summaryRow("Plan", esc(planName)) +
-            summaryRow("Total Credits", formatUSD(credits.total_credits)) +
-            summaryRow("Monthly Credits", formatUSD(credits.monthly_credits)) +
-            summaryRow("最差窗口", esc(worstName) + " " + (worstPct === null ? "-" : worstPct.toFixed(1) + "%")) +
-            miniBar(worstPct, worstLevel);
+            '<div class="oc-key-body">' + ccRows + '</div>';
         } else {
           allBadgeCommandcode.className = "status-badge";
           allBadgeTextCommandcode.textContent = "尚未加载";

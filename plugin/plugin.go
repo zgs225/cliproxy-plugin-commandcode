@@ -13,7 +13,7 @@ import (
 const (
 	PluginID       = "commandcode"
 	PluginName     = "commandcode"
-	PluginVersion  = "0.4.3"
+	PluginVersion  = "0.4.4"
 	PluginAuthor   = "zgs225"
 	PluginRepo     = "https://github.com/zgs225/cliproxy-plugin-commandcode"
 	PluginLogo     = "https://raw.githubusercontent.com/zgs225/cliproxy-plugin-commandcode/main/assets/logo.svg"
