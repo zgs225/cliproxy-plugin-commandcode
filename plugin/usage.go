@@ -142,6 +142,41 @@ func FetchUsageSummaryRaw(ctx context.Context, apiBase, sessionToken string, hos
 	return fetchUpstream(ctx, apiBase, "internal/usage/summary", sessionToken, hostCallbackID)
 }
 
+// fetchUpstreamAlpha performs a GET on a Command Code /alpha endpoint using a
+// Provider API key (Bearer auth) instead of a session cookie, reusing the
+// host.http.do bridge when available, else falling back to net/http.
+func fetchUpstreamAlpha(ctx context.Context, apiBase, endpoint, apiKey, hostCallbackID string) ([]byte, int, error) {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return nil, http.StatusBadRequest, errors.New("missing commandcode_api_key: please provide a valid Command Code Provider API key")
+	}
+
+	if apiBase == "" {
+		apiBase = DefaultAPIBase
+	}
+	url := fmt.Sprintf("%s/%s", strings.TrimRight(apiBase, "/"), strings.TrimLeft(endpoint, "/"))
+
+	headers := map[string][]string{
+		"Authorization": {"Bearer " + apiKey},
+		"Accept":        {"application/json"},
+		"User-Agent":    {fmt.Sprintf("cliproxy-plugin-commandcode/%s", PluginVersion)},
+	}
+	return doUpstreamRequest(ctx, http.MethodGet, url, headers, hostCallbackID)
+}
+
+// FetchCommandCodeCreditsAlphaRaw fetches raw credit data from
+// {apiBase}/alpha/billing/credits with Bearer auth (Provider API key),
+// via host.http.do or net/http fallback.
+func FetchCommandCodeCreditsAlphaRaw(ctx context.Context, apiBase, apiKey, hostCallbackID string) ([]byte, int, error) {
+	return fetchUpstreamAlpha(ctx, apiBase, "alpha/billing/credits", apiKey, hostCallbackID)
+}
+
+// FetchCommandCodeUsageSummaryAlphaRaw fetches the billing-period (monthly)
+// usage totals from {apiBase}/alpha/usage/summary with Bearer auth.
+func FetchCommandCodeUsageSummaryAlphaRaw(ctx context.Context, apiBase, apiKey, hostCallbackID string) ([]byte, int, error) {
+	return fetchUpstreamAlpha(ctx, apiBase, "alpha/usage/summary", apiKey, hostCallbackID)
+}
+
 // FetchOpenCodeUsageRaw fetches raw OpenCode Go usage data from
 // {apiBase}/usage with Bearer auth, via host.http.do or net/http fallback.
 func FetchOpenCodeUsageRaw(ctx context.Context, apiBase, apiKey, hostCallbackID string) ([]byte, int, error) {

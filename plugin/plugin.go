@@ -13,7 +13,7 @@ import (
 const (
 	PluginID       = "commandcode"
 	PluginName     = "commandcode"
-	PluginVersion  = "0.4.5"
+	PluginVersion  = "0.5.0"
 	PluginAuthor   = "zgs225"
 	PluginRepo     = "https://github.com/zgs225/cliproxy-plugin-commandcode"
 	PluginLogo     = "https://raw.githubusercontent.com/zgs225/cliproxy-plugin-commandcode/main/assets/logo.svg"
@@ -22,12 +22,13 @@ const (
 
 // PluginConfig holds the runtime configuration parsed from YAML.
 type PluginConfig struct {
-	mu              sync.RWMutex
-	SessionToken    string   `yaml:"session_token" json:"session_token"`
-	APIBase         string   `yaml:"api_base" json:"api_base"`
-	OpenCodeAPIKey  string   `yaml:"opencode_api_key" json:"opencode_api_key"`
-	OpenCodeAPIKeys []string `yaml:"opencode_api_keys" json:"opencode_api_keys"`
-	OpenCodeAPIBase string   `yaml:"opencode_api_base" json:"opencode_api_base"`
+	mu                sync.RWMutex
+	SessionToken      string   `yaml:"session_token" json:"session_token"`
+	CommandCodeAPIKey string   `yaml:"commandcode_api_key" json:"commandcode_api_key"`
+	APIBase           string   `yaml:"api_base" json:"api_base"`
+	OpenCodeAPIKey    string   `yaml:"opencode_api_key" json:"opencode_api_key"`
+	OpenCodeAPIKeys   []string `yaml:"opencode_api_keys" json:"opencode_api_keys"`
+	OpenCodeAPIBase   string   `yaml:"opencode_api_base" json:"opencode_api_base"`
 }
 
 // UpdateFromYAML updates the configuration from raw YAML bytes.
@@ -36,11 +37,12 @@ func (c *PluginConfig) UpdateFromYAML(raw []byte) error {
 		return nil
 	}
 	var tmp struct {
-		SessionToken    string   `yaml:"session_token"`
-		APIBase         string   `yaml:"api_base"`
-		OpenCodeAPIKey  string   `yaml:"opencode_api_key"`
-		OpenCodeAPIKeys []string `yaml:"opencode_api_keys"`
-		OpenCodeAPIBase string   `yaml:"opencode_api_base"`
+		SessionToken      string   `yaml:"session_token"`
+		CommandCodeAPIKey string   `yaml:"commandcode_api_key"`
+		APIBase           string   `yaml:"api_base"`
+		OpenCodeAPIKey    string   `yaml:"opencode_api_key"`
+		OpenCodeAPIKeys   []string `yaml:"opencode_api_keys"`
+		OpenCodeAPIBase   string   `yaml:"opencode_api_base"`
 	}
 	if err := yaml.Unmarshal(raw, &tmp); err != nil {
 		return fmt.Errorf("unmarshal config_yaml: %w", err)
@@ -51,6 +53,11 @@ func (c *PluginConfig) UpdateFromYAML(raw []byte) error {
 
 	if tmp.SessionToken != "" {
 		c.SessionToken = ExtractSessionToken(tmp.SessionToken)
+	}
+	if tmp.CommandCodeAPIKey != "" {
+		// Provider API key is a plain Bearer token; do not run it through
+		// ExtractSessionToken (that is Command Code cookie specific).
+		c.CommandCodeAPIKey = strings.TrimSpace(tmp.CommandCodeAPIKey)
 	}
 	if tmp.APIBase != "" {
 		c.APIBase = strings.TrimRight(tmp.APIBase, "/")
@@ -83,6 +90,15 @@ func (c *PluginConfig) GetSessionToken() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.SessionToken
+}
+
+// GetCommandCodeAPIKey safely returns the configured Command Code Provider
+// API key. When non-empty, usage queries go through the /alpha endpoints
+// with Bearer auth instead of the session-cookie /internal endpoints.
+func (c *PluginConfig) GetCommandCodeAPIKey() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.CommandCodeAPIKey
 }
 
 // SetSessionToken safely sets the session token.
@@ -218,6 +234,11 @@ func (p *Plugin) handleRegister(raw []byte) ([]byte, error) {
 					Name:        "session_token",
 					Type:        "string",
 					Description: "Command Code session token (__Secure-commandcode_prod_.session_token cookie value)",
+				},
+				{
+					Name:        "commandcode_api_key",
+					Type:        "string",
+					Description: "Command Code Provider API key (user_…); when set, usage queries go through the /alpha endpoints with Bearer auth — no session cookie needed",
 				},
 				{
 					Name:        "api_base",

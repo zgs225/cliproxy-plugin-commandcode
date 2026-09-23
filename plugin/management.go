@@ -157,14 +157,23 @@ func handleGetUsage(ctx context.Context, req ManagementRequest, cfg *PluginConfi
 		apiBase = cfg.GetAPIBase()
 	}
 
-	return executeUsageQuery(ctx, apiBase, sessionToken, req.HostCallbackID)
+	// commandcode_api_key is NOT overridable via query parameters (same
+	// secrets-out-of-URLs policy as the OpenCode handler): the plugin
+	// config is the only credential source on GET.
+	apiKey := ""
+	if cfg != nil {
+		apiKey = cfg.GetCommandCodeAPIKey()
+	}
+
+	return executeUsageQuery(ctx, apiBase, apiKey, sessionToken, req.HostCallbackID)
 }
 
 func handlePostUsage(ctx context.Context, req ManagementRequest, cfg *PluginConfig) (ManagementResponse, error) {
 	var body struct {
-		SessionToken string `json:"session_token"`
-		Token        string `json:"token"`
-		APIBase      string `json:"api_base"`
+		SessionToken      string `json:"session_token"`
+		Token             string `json:"token"`
+		APIBase           string `json:"api_base"`
+		CommandCodeAPIKey string `json:"commandcode_api_key"`
 	}
 
 	if len(req.Body) > 0 {
@@ -176,6 +185,7 @@ func handlePostUsage(ctx context.Context, req ManagementRequest, cfg *PluginConf
 		sessionToken = body.Token
 	}
 	apiBase := body.APIBase
+	apiKey := body.CommandCodeAPIKey
 
 	// Fallback to plugin config if body didn't specify
 	if sessionToken == "" && cfg != nil {
@@ -184,12 +194,22 @@ func handlePostUsage(ctx context.Context, req ManagementRequest, cfg *PluginConf
 	if apiBase == "" && cfg != nil {
 		apiBase = cfg.GetAPIBase()
 	}
+	if apiKey == "" && cfg != nil {
+		apiKey = cfg.GetCommandCodeAPIKey()
+	}
 
-	return executeUsageQuery(ctx, apiBase, sessionToken, req.HostCallbackID)
+	return executeUsageQuery(ctx, apiBase, apiKey, sessionToken, req.HostCallbackID)
 }
 
-func executeUsageQuery(ctx context.Context, apiBase, sessionToken, hostCallbackID string) (ManagementResponse, error) {
-	if strings.TrimSpace(sessionToken) == "" {
+func executeUsageQuery(ctx context.Context, apiBase, apiKey, sessionToken, hostCallbackID string) (ManagementResponse, error) {
+	apiKey = strings.TrimSpace(apiKey)
+
+	// Credential priority: commandcode_api_key non-empty → /alpha + Bearer
+	// (Provider API key, no cookie); otherwise session_token → /internal
+	// + Cookie (legacy fallback). Neither present → 400 with the
+	// "session_token is required" prefix (isLocalCredentialError in the
+	// /all aggregate depends on this message).
+	if strings.TrimSpace(sessionToken) == "" && apiKey == "" {
 		resBytes, _ := json.Marshal(map[string]any{
 			"ok":    false,
 			"error": "session_token is required. Configure session_token in plugin config, provide a credential file, or pass session_token in request",
@@ -203,7 +223,14 @@ func executeUsageQuery(ctx context.Context, apiBase, sessionToken, hostCallbackI
 		}, nil
 	}
 
-	raw, statusCode, errFetch := FetchCreditsRaw(ctx, apiBase, sessionToken, hostCallbackID)
+	var raw []byte
+	var statusCode int
+	var errFetch error
+	if apiKey != "" {
+		raw, statusCode, errFetch = FetchCommandCodeCreditsAlphaRaw(ctx, apiBase, apiKey, hostCallbackID)
+	} else {
+		raw, statusCode, errFetch = FetchCreditsRaw(ctx, apiBase, sessionToken, hostCallbackID)
+	}
 	if errFetch != nil {
 		resBytes, _ := json.Marshal(map[string]any{
 			"ok":          false,
@@ -223,12 +250,19 @@ func executeUsageQuery(ctx context.Context, apiBase, sessionToken, hostCallbackI
 	}
 
 	if statusCode != http.StatusOK {
-		resBytes, _ := json.Marshal(map[string]any{
+		payload := map[string]any{
 			"ok":          false,
 			"status_code": statusCode,
-			"error":       "upstream returned non-200 status",
-			"body":        string(raw),
-		})
+		}
+		if apiKey != "" {
+			// Alpha path: do NOT echo the upstream body; point at the
+			// configured Provider API key instead.
+			payload["error"] = fmt.Sprintf("commandcode upstream returned %d: check commandcode_api_key", statusCode)
+		} else {
+			payload["error"] = "upstream returned non-200 status"
+			payload["body"] = string(raw)
+		}
+		resBytes, _ := json.Marshal(payload)
 		return ManagementResponse{
 			StatusCode: statusCode,
 			Headers: map[string][]string{
@@ -240,7 +274,14 @@ func executeUsageQuery(ctx context.Context, apiBase, sessionToken, hostCallbackI
 
 	// Fetch billing-period (monthly) usage totals; non-fatal if unavailable.
 	var summary *UpstreamUsageSummaryResponse
-	if sumRaw, sumStatus, sumErr := FetchUsageSummaryRaw(ctx, apiBase, sessionToken, hostCallbackID); sumErr == nil && sumStatus == http.StatusOK {
+	if apiKey != "" {
+		if sumRaw, sumStatus, sumErr := FetchCommandCodeUsageSummaryAlphaRaw(ctx, apiBase, apiKey, hostCallbackID); sumErr == nil && sumStatus == http.StatusOK {
+			var parsed UpstreamUsageSummaryResponse
+			if errSum := json.Unmarshal(sumRaw, &parsed); errSum == nil && parsed.TotalMonthlyCredits > 0 {
+				summary = &parsed
+			}
+		}
+	} else if sumRaw, sumStatus, sumErr := FetchUsageSummaryRaw(ctx, apiBase, sessionToken, hostCallbackID); sumErr == nil && sumStatus == http.StatusOK {
 		var parsed UpstreamUsageSummaryResponse
 		if errSum := json.Unmarshal(sumRaw, &parsed); errSum == nil && parsed.TotalMonthlyCredits > 0 {
 			summary = &parsed
@@ -369,16 +410,19 @@ func handleOpenCodeUsage(ctx context.Context, req ManagementRequest, cfg *Plugin
 // all failed due to upstream errors → 502.
 func handleAllUsage(ctx context.Context, req ManagementRequest, cfg *PluginConfig) (ManagementResponse, error) {
 	sessionToken := ""
+	commandcodeAPIKey := ""
 	opencodeKeys := []string{}
 
 	if req.Method == http.MethodPost && len(req.Body) > 0 {
 		var body struct {
-			SessionToken    string   `json:"session_token"`
-			OpencodeAPIKeys []string `json:"opencode_api_keys"`
-			OpencodeAPIKey  string   `json:"opencode_api_key"`
+			SessionToken      string   `json:"session_token"`
+			CommandCodeAPIKey string   `json:"commandcode_api_key"`
+			OpencodeAPIKeys   []string `json:"opencode_api_keys"`
+			OpencodeAPIKey    string   `json:"opencode_api_key"`
 		}
 		_ = json.Unmarshal(req.Body, &body)
 		sessionToken = body.SessionToken
+		commandcodeAPIKey = body.CommandCodeAPIKey
 		opencodeKeys = normalizeOpenCodeKeys(body.OpencodeAPIKeys)
 		if len(opencodeKeys) == 0 {
 			if single := strings.TrimSpace(body.OpencodeAPIKey); single != "" {
@@ -390,6 +434,9 @@ func handleAllUsage(ctx context.Context, req ManagementRequest, cfg *PluginConfi
 	// Fallback to plugin config
 	if sessionToken == "" && cfg != nil {
 		sessionToken = cfg.GetSessionToken()
+	}
+	if commandcodeAPIKey == "" && cfg != nil {
+		commandcodeAPIKey = cfg.GetCommandCodeAPIKey()
 	}
 	if len(opencodeKeys) == 0 && cfg != nil {
 		opencodeKeys = cfg.GetOpenCodeAPIKeys()
@@ -411,7 +458,7 @@ func handleAllUsage(ctx context.Context, req ManagementRequest, cfg *PluginConfi
 	succeeded := 0
 
 	// Provider 1: Command Code (reuses executeUsageQuery).
-	ccResp, _ := executeUsageQuery(ctx, apiBase, sessionToken, req.HostCallbackID)
+	ccResp, _ := executeUsageQuery(ctx, apiBase, commandcodeAPIKey, sessionToken, req.HostCallbackID)
 	if ccResp.StatusCode == http.StatusOK {
 		resp.CommandCode = ccResp.Body
 		succeeded++

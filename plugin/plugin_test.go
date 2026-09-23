@@ -46,15 +46,15 @@ api_base: "https://custom-api.commandcode.ai"
 		t.Errorf("Capabilities.ManagementAPI = false, want true")
 	}
 
-	// Verify config fields (v0.4.0: 4 → 5, adds opencode_api_keys)
-	if len(reg.Metadata.ConfigFields) != 5 {
-		t.Fatalf("ConfigFields len = %d, want 5", len(reg.Metadata.ConfigFields))
+	// Verify config fields (v0.5.0: 5 → 6, adds commandcode_api_key)
+	if len(reg.Metadata.ConfigFields) != 6 {
+		t.Fatalf("ConfigFields len = %d, want 6", len(reg.Metadata.ConfigFields))
 	}
 	fieldNames := map[string]bool{}
 	for _, f := range reg.Metadata.ConfigFields {
 		fieldNames[f.Name] = true
 	}
-	if !fieldNames["session_token"] || !fieldNames["api_base"] || !fieldNames["opencode_api_key"] || !fieldNames["opencode_api_keys"] || !fieldNames["opencode_api_base"] {
+	if !fieldNames["session_token"] || !fieldNames["commandcode_api_key"] || !fieldNames["api_base"] || !fieldNames["opencode_api_key"] || !fieldNames["opencode_api_keys"] || !fieldNames["opencode_api_base"] {
 		t.Errorf("ConfigFields missing expected fields: %+v", reg.Metadata.ConfigFields)
 	}
 
@@ -80,6 +80,44 @@ session_token: "new-token-abc"
 	}
 	if p.config.GetSessionToken() != "new-token-abc" {
 		t.Errorf("SessionToken after reconfigure = %q, want new-token-abc", p.config.GetSessionToken())
+	}
+}
+
+func TestPluginConfig_CommandCodeAPIKey(t *testing.T) {
+	p := NewPlugin()
+	// Trimmed, and NOT run through ExtractSessionToken (it is a plain
+	// Bearer token, not a Command Code cookie string).
+	configYAML := []byte("commandcode_api_key: \"  user_abc123xyz  \"\n")
+	lifecycleReq, _ := json.Marshal(LifecycleRequest{ConfigYAML: configYAML})
+	if _, err := p.HandleMethod("plugin.register", lifecycleReq); err != nil {
+		t.Fatalf("handleMethod(plugin.register) error: %v", err)
+	}
+	if got := p.config.GetCommandCodeAPIKey(); got != "user_abc123xyz" {
+		t.Errorf("CommandCodeAPIKey = %q, want user_abc123xyz (trimmed, raw)", got)
+	}
+
+	// Whitespace-only value clears the field.
+	p2 := NewPlugin()
+	spaceReq, _ := json.Marshal(LifecycleRequest{ConfigYAML: []byte("commandcode_api_key: \"   \"\n")})
+	if _, err := p2.HandleMethod("plugin.register", spaceReq); err != nil {
+		t.Fatalf("handleMethod(plugin.register) error: %v", err)
+	}
+	if got := p2.config.GetCommandCodeAPIKey(); got != "" {
+		t.Errorf("CommandCodeAPIKey = %q, want empty (whitespace-only)", got)
+	}
+
+	// Omitting the key in a reconfigure must not clear a configured value.
+	reconfReq, _ := json.Marshal(LifecycleRequest{ConfigYAML: []byte("session_token: \"tok\"\n")})
+	if _, err := p.HandleMethod("plugin.reconfigure", reconfReq); err != nil {
+		t.Fatalf("handleMethod(plugin.reconfigure) error: %v", err)
+	}
+	if got := p.config.GetCommandCodeAPIKey(); got != "user_abc123xyz" {
+		t.Errorf("CommandCodeAPIKey after reconfigure = %q, want kept user_abc123xyz", got)
+	}
+
+	// Default is empty.
+	if got := NewPlugin().config.GetCommandCodeAPIKey(); got != "" {
+		t.Errorf("default CommandCodeAPIKey = %q, want empty", got)
 	}
 }
 

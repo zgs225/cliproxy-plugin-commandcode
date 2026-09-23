@@ -790,3 +790,128 @@ func TestFetchOpenCodeUsageRaw_HostCaller(t *testing.T) {
 		t.Errorf("host request Authorization = %v, want Bearer sk-host-key", auth)
 	}
 }
+
+// v0.5.0: the /alpha endpoints authenticate with a Bearer Provider API key
+// instead of the session cookie. The URL must be /alpha/billing/credits and
+// no Cookie header may be sent.
+func TestFetchCommandCodeCreditsAlphaRaw_FallbackHTTP(t *testing.T) {
+	var sawAuth, sawCookie, sawAccept, sawUA string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/alpha/billing/credits" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		sawAuth = r.Header.Get("Authorization")
+		sawCookie = r.Header.Get("Cookie")
+		sawAccept = r.Header.Get("Accept")
+		sawUA = r.Header.Get("User-Agent")
+
+		// Alpha credits omit opensourceMonthlyCredits (field difference vs
+		// the internal endpoint); formatCredits must tolerate that.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"credits":{"monthlyCredits":700},"windowLimits":{"fiveHour":{"used":1,"cap":10}}}`))
+	}))
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	body, status, err := FetchCommandCodeCreditsAlphaRaw(context.Background(), ts.URL, "user_test-key", "")
+	if err != nil {
+		t.Fatalf("FetchCommandCodeCreditsAlphaRaw error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200", status)
+	}
+	if sawAuth != "Bearer user_test-key" {
+		t.Errorf("Authorization = %q, want Bearer user_test-key", sawAuth)
+	}
+	if sawCookie != "" {
+		t.Errorf("Cookie = %q, want no Cookie header on the /alpha path", sawCookie)
+	}
+	if sawAccept != "application/json" {
+		t.Errorf("Accept = %q, want application/json", sawAccept)
+	}
+	if !strings.Contains(sawUA, "cliproxy-plugin-commandcode/") {
+		t.Errorf("User-Agent = %q, want cliproxy-plugin-commandcode/<version>", sawUA)
+	}
+
+	usage, errParse := ParseAndFormatUsage(body, nil, time.Time{})
+	if errParse != nil {
+		t.Fatalf("ParseAndFormatUsage error: %v", errParse)
+	}
+	if usage.Credits.MonthlyCredits != 700 {
+		t.Errorf("MonthlyCredits = %v, want 700", usage.Credits.MonthlyCredits)
+	}
+	if usage.Credits.OpensourceMonthlyCredits != 0 {
+		t.Errorf("OpensourceMonthlyCredits = %v, want 0 (field absent in alpha payload)", usage.Credits.OpensourceMonthlyCredits)
+	}
+	// total = monthly + 0 when opensourceMonthlyCredits is missing.
+	if usage.Credits.TotalCredits != 700 {
+		t.Errorf("TotalCredits = %v, want 700 (= monthly when opensource field absent)", usage.Credits.TotalCredits)
+	}
+}
+
+func TestFetchCommandCodeUsageSummaryAlphaRaw_FallbackHTTP(t *testing.T) {
+	var sawAuth, sawCookie string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/alpha/usage/summary" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		sawAuth = r.Header.Get("Authorization")
+		sawCookie = r.Header.Get("Cookie")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"totalMonthlyCredits": 123}`))
+	}))
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	body, status, err := FetchCommandCodeUsageSummaryAlphaRaw(context.Background(), ts.URL+"/", "user_test-key", "")
+	if err != nil {
+		t.Fatalf("FetchCommandCodeUsageSummaryAlphaRaw error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200", status)
+	}
+	if sawAuth != "Bearer user_test-key" {
+		t.Errorf("Authorization = %q, want Bearer user_test-key", sawAuth)
+	}
+	if sawCookie != "" {
+		t.Errorf("Cookie = %q, want no Cookie header on the /alpha path", sawCookie)
+	}
+
+	var summary UpstreamUsageSummaryResponse
+	if err := json.Unmarshal(body, &summary); err != nil {
+		t.Fatalf("unmarshal summary error: %v", err)
+	}
+	if summary.TotalMonthlyCredits != 123 {
+		t.Errorf("TotalMonthlyCredits = %v, want 123", summary.TotalMonthlyCredits)
+	}
+}
+
+func TestFetchCommandCodeCreditsAlphaRaw_MissingKey(t *testing.T) {
+	SetHostCaller(nil)
+	for _, key := range []string{"", "   "} {
+		_, status, err := FetchCommandCodeCreditsAlphaRaw(context.Background(), "", key, "")
+		if err == nil {
+			t.Fatalf("key %q: expected error for missing key", key)
+		}
+		if status != http.StatusBadRequest {
+			t.Errorf("key %q: status = %d, want 400", key, status)
+		}
+		if !strings.Contains(err.Error(), "missing commandcode_api_key") {
+			t.Errorf("key %q: error = %q, want it to mention missing commandcode_api_key", key, err.Error())
+		}
+	}
+}

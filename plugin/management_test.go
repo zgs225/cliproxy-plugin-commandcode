@@ -75,8 +75,8 @@ func TestHandleManagement_QuotaResource(t *testing.T) {
 		if !strings.Contains(bodyStr, "用量配额") {
 			t.Errorf("Body does not contain expected menu text 用量配额")
 		}
-		if !strings.Contains(bodyStr, "v0.4.5") {
-			t.Errorf("Body does not contain version badge v0.4.5")
+		if !strings.Contains(bodyStr, "v0.5.0") {
+			t.Errorf("Body does not contain version badge v0.5.0")
 		}
 	}
 }
@@ -818,5 +818,349 @@ func TestHandleManagement_UnknownPath(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("StatusCode = %d, want 404", resp.StatusCode)
+	}
+}
+
+// ---- v0.5.0: commandcode_api_key → /alpha + Bearer path ----
+
+// mockAlphaCreditsJSON omits opensourceMonthlyCredits, matching the real
+// /alpha/billing/credits payload shape (field difference vs /internal).
+const mockAlphaCreditsJSON = `{"credits":{"monthlyCredits":555},"windowLimits":{"fiveHour":{"used":1,"cap":10}}}`
+
+// newAlphaTestServer: /alpha/billing/credits and /alpha/usage/summary both
+// assert Bearer auth and the absence of a Cookie header; every other path
+// fails the test (regression guard against falling back to /internal).
+func newAlphaTestServer(t *testing.T, wantKey string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+wantKey {
+			t.Errorf("upstream Authorization = %q, want Bearer %s", got, wantKey)
+		}
+		if got := r.Header.Get("Cookie"); got != "" {
+			t.Errorf("upstream Cookie = %q, want none on the /alpha path", got)
+		}
+		switch r.URL.Path {
+		case "/alpha/billing/credits":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(mockAlphaCreditsJSON))
+		case "/alpha/usage/summary":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"totalMonthlyCredits": 40}`))
+		default:
+			t.Errorf("unexpected upstream request: %s %s (internal path must not be hit when commandcode_api_key is set)", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+// GET /usage with commandcode_api_key configured → both upstream calls hit
+// /alpha/* with Bearer auth and no Cookie; response parses with the alpha
+// payload (total = monthly when opensource field is absent) and the monthly
+// window is derived from the /alpha summary.
+func TestHandleManagement_GetUsage_AlphaKey(t *testing.T) {
+	ts := newAlphaTestServer(t, "user_cfg-key")
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	cfg := &PluginConfig{
+		CommandCodeAPIKey: "user_cfg-key",
+		APIBase:           ts.URL,
+	}
+	req := ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/management/plugins/commandcode/usage",
+	}
+	resp, err := HandleManagement(context.Background(), req, cfg)
+	if err != nil {
+		t.Fatalf("HandleManagement error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want 200, body=%s", resp.StatusCode, string(resp.Body))
+	}
+
+	var usage FormattedUsageResponse
+	if err := json.Unmarshal(resp.Body, &usage); err != nil {
+		t.Fatalf("unmarshal body error: %v", err)
+	}
+	if !usage.OK {
+		t.Fatal("expected OK=true")
+	}
+	if usage.Credits.MonthlyCredits != 555 || usage.Credits.TotalCredits != 555 {
+		t.Errorf("credits = %+v, want monthly=555 total=555 (opensource absent in alpha payload)", usage.Credits)
+	}
+}
+
+// POST /usage: body commandcode_api_key overrides the configured key (the
+// config key gets a 401 from the mock, so a 200 proves the body key won).
+func TestHandleManagement_PostUsage_AlphaKeyBodyOverridesConfig(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("Authorization") {
+		case "Bearer user_body-key":
+			switch r.URL.Path {
+			case "/alpha/billing/credits":
+				_, _ = w.Write([]byte(mockAlphaCreditsJSON))
+			case "/alpha/usage/summary":
+				_, _ = w.Write([]byte(`{"totalMonthlyCredits": 40}`))
+			default:
+				t.Errorf("unexpected path: %s", r.URL.Path)
+				http.NotFound(w, r)
+			}
+		default:
+			t.Errorf("upstream got Authorization %q — config key must lose to the POST body key", r.Header.Get("Authorization"))
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	}))
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	reqBody, _ := json.Marshal(map[string]string{
+		"commandcode_api_key": "user_body-key",
+		"api_base":            ts.URL,
+	})
+	req := ManagementRequest{
+		Method: http.MethodPost,
+		Path:   "/plugins/commandcode/usage",
+		Body:   reqBody,
+	}
+	cfg := &PluginConfig{CommandCodeAPIKey: "user_cfg-must-lose", APIBase: ts.URL}
+	resp, err := HandleManagement(context.Background(), req, cfg)
+	if err != nil {
+		t.Fatalf("HandleManagement error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want 200 (body key overrides config), body=%s", resp.StatusCode, string(resp.Body))
+	}
+	var usage FormattedUsageResponse
+	if err := json.Unmarshal(resp.Body, &usage); err != nil || !usage.OK {
+		t.Errorf("unexpected response: err=%v usage=%+v", err, usage)
+	}
+}
+
+// Regression: without commandcode_api_key the legacy /internal + Cookie path
+// is preserved; the /alpha endpoints must never be requested.
+func TestHandleManagement_Usage_FallbackToInternalCookie(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/alpha/") {
+			t.Errorf("unexpected /alpha request %s — must stay on /internal without commandcode_api_key", r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/internal/billing/credits":
+			if !strings.Contains(r.Header.Get("Cookie"), "legacy-cookie-token") {
+				t.Errorf("Cookie = %q, want the session token cookie", r.Header.Get("Cookie"))
+			}
+			_, _ = w.Write([]byte(`{"credits":{"monthlyCredits": 321},"windowLimits":{"fiveHour":{"used":1,"cap":10}}}`))
+		case "/internal/usage/summary":
+			_, _ = w.Write([]byte(`{"totalMonthlyCredits": 11}`))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	cfg := &PluginConfig{SessionToken: "legacy-cookie-token", APIBase: ts.URL}
+
+	t.Run("GET falls back to internal", func(t *testing.T) {
+		req := ManagementRequest{Method: http.MethodGet, Path: "/plugins/commandcode/usage"}
+		resp, err := HandleManagement(context.Background(), req, cfg)
+		if err != nil {
+			t.Fatalf("HandleManagement error: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("StatusCode = %d, want 200, body=%s", resp.StatusCode, string(resp.Body))
+		}
+	})
+
+	t.Run("POST falls back to internal", func(t *testing.T) {
+		reqBody, _ := json.Marshal(map[string]string{"session_token": "legacy-cookie-token", "api_base": ts.URL})
+		req := ManagementRequest{Method: http.MethodPost, Path: "/plugins/commandcode/usage", Body: reqBody}
+		resp, err := HandleManagement(context.Background(), req, &PluginConfig{})
+		if err != nil {
+			t.Fatalf("HandleManagement error: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("StatusCode = %d, want 200, body=%s", resp.StatusCode, string(resp.Body))
+		}
+	})
+}
+
+// GET must NOT honor a commandcode_api_key query parameter (same
+// secrets-out-of-URLs policy as the OpenCode handler): the config's
+// session_token path is used and the query-provided key is ignored.
+func TestHandleManagement_GetUsage_NoQueryKeyOverride(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/alpha/billing/credits" || r.URL.Path == "/alpha/usage/summary" {
+			t.Errorf("unexpected /alpha request %s — query override of commandcode_api_key is not supported", r.URL.Path)
+		}
+		if r.URL.Path != "/internal/billing/credits" {
+			return
+		}
+		if r.Header.Get("Cookie") == "" {
+			t.Errorf("Cookie = %q, want the configured session token cookie", r.Header.Get("Cookie"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"credits":{"monthlyCredits": 77},"windowLimits":{"fiveHour":{"used":1,"cap":10}}}`))
+	}))
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	cfg := &PluginConfig{SessionToken: "configured-cookie-token", APIBase: ts.URL}
+	req := ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/management/plugins/commandcode/usage",
+		Query: map[string][]string{
+			"commandcode_api_key": {"user_query-must-be-ignored"},
+		},
+	}
+	resp, err := HandleManagement(context.Background(), req, cfg)
+	if err != nil {
+		t.Fatalf("HandleManagement error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want 200, body=%s", resp.StatusCode, string(resp.Body))
+	}
+}
+
+// Alpha upstream non-200 → statusCode passed through, message points at
+// commandcode_api_key, and the upstream body is NOT echoed (unlike the
+// internal path).
+func TestHandleManagement_Usage_AlphaUpstreamNon200(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"upstream secret detail xyzzy"}`))
+	}))
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	cfg := &PluginConfig{CommandCodeAPIKey: "user_bad-key", APIBase: ts.URL}
+	resp, err := HandleManagement(context.Background(), ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/plugins/commandcode/usage",
+	}, cfg)
+	if err != nil {
+		t.Fatalf("HandleManagement error: %v", err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("StatusCode = %d, want 401 (upstream status passed through)", resp.StatusCode)
+	}
+
+	var errResp struct {
+		OK         bool   `json:"ok"`
+		StatusCode int    `json:"status_code"`
+		Error      string `json:"error"`
+		Body       string `json:"body"`
+	}
+	if err := json.Unmarshal(resp.Body, &errResp); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	if errResp.OK || errResp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("error payload = %+v, want ok=false status_code=401", errResp)
+	}
+	if !strings.Contains(errResp.Error, "commandcode upstream returned 401: check commandcode_api_key") {
+		t.Errorf("error = %q, want the commandcode_api_key hint message", errResp.Error)
+	}
+	if strings.Contains(string(resp.Body), "upstream secret detail") {
+		t.Errorf("alpha branch must not echo the upstream body, got: %s", string(resp.Body))
+	}
+}
+
+// Neither credential → 400 with the preserved "session_token is required"
+// prefix (isLocalCredentialError in /all depends on it).
+func TestHandleManagement_Usage_NoCredentialsStillSessionTokenMessage(t *testing.T) {
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	resp, err := HandleManagement(context.Background(), ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/plugins/commandcode/usage",
+	}, &PluginConfig{})
+	if err != nil {
+		t.Fatalf("HandleManagement error: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("StatusCode = %d, want 400, body=%s", resp.StatusCode, string(resp.Body))
+	}
+	if msg := extractErrorResponseMessage(resp.Body); !strings.HasPrefix(msg, "session_token is required") {
+		t.Errorf("error = %q, want the preserved 'session_token is required' prefix", msg)
+	}
+}
+
+// /all: POST body commandcode_api_key overrides the configured session_token
+// (and config key) — the Command Code provider goes through /alpha + Bearer.
+func TestHandleManagement_AllUsage_CommandCodeAPIKeyOverride(t *testing.T) {
+	ts := newAlphaTestServer(t, "user_all-key")
+	defer ts.Close()
+
+	SetHostCaller(nil)
+	SetDefaultHTTPClient(ts.Client())
+	defer func() {
+		SetDefaultHTTPClient(&http.Client{Timeout: 15 * time.Second})
+	}()
+
+	cfg := &PluginConfig{
+		SessionToken: "cfg-token-must-lose",
+		APIBase:      ts.URL,
+	}
+
+	reqBody, _ := json.Marshal(map[string]string{"commandcode_api_key": "user_all-key"})
+	req := ManagementRequest{
+		Method: http.MethodPost,
+		Path:   "/plugins/commandcode/all",
+		Body:   reqBody,
+	}
+	resp, err := HandleManagement(context.Background(), req, cfg)
+	if err != nil {
+		t.Fatalf("HandleManagement error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want 200 (commandcode succeeded via /alpha), body=%s", resp.StatusCode, string(resp.Body))
+	}
+
+	var all AllUsageResponse
+	if err := json.Unmarshal(resp.Body, &all); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if !all.OK {
+		t.Error("expected ok=true")
+	}
+	var ccUsage FormattedUsageResponse
+	if err := json.Unmarshal(all.CommandCode, &ccUsage); err != nil || !ccUsage.OK {
+		t.Errorf("commandcode payload invalid: err=%v usage=%+v", err, ccUsage)
+	}
+	if ccUsage.Credits.TotalCredits != 555 {
+		t.Errorf("commandcode total_credits = %v, want 555 (alpha payload)", ccUsage.Credits.TotalCredits)
+	}
+	// OpenCode key missing → local-credential error for that provider only.
+	if _, present := all.Errors["opencode"]; !present {
+		t.Errorf("expected errors[opencode], got %v", all.Errors)
 	}
 }

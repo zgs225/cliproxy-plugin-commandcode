@@ -40,7 +40,7 @@
    - 支持在 `config.yaml` 配置或在配额页面上直接输入。
    - 支持纯 token 或完整 Cookie 字符串（自动提取 `__Secure-commandcode_prod_.session_token`）。
 4. **精确用量与双滑动窗口限额解析**：
-   - 上游接口：`GET https://api.commandcode.ai/internal/billing/credits`。
+   - 上游接口（v0.5.0+）：配置 `commandcode_api_key`（Provider API key，长期凭据）时走 `GET https://api.commandcode.ai/alpha/billing/credits` 与 `/alpha/usage/summary`（Bearer 认证）；否则回退 session cookie 查 `/internal/billing/credits`。
    - 请求优先走宿主提供的 `host.http.do` 回调（复用宿主代理、日志与鉴权管道），离线或未注入宿主时自动无缝降级至 Go 标准 `net/http`。
    - 全面解析 `credits`（月度基础额度、开源奖励额度、总可用额度）与 `windowLimits`（5小时短期滑动窗口、周度窗口限额，计算已用量、上限、剩余量、使用百分比及重置时间）。
 5. **嵌入式纯单文件 QuotaCard 资源页**：
@@ -132,7 +132,8 @@ plugins:
     commandcode:
       enabled: true
       priority: 1
-      session_token: "YOUR_COMMANDCODE_SESSION_TOKEN" # 支持纯 token 或完整 Cookie 字符串
+      session_token: "YOUR_COMMANDCODE_SESSION_TOKEN" # v0.4.5 前唯一凭据；v0.5.0 起为可选回退
+      commandcode_api_key: "user_YOUR_COMMANDCODE_PROVIDER_KEY" # v0.5.0+ 推荐：非空则用量查询走 /alpha 端点（Bearer），无需 session cookie
       api_base: "https://api.commandcode.ai" # 可选，默认为官方接口
       opencode_api_key: "sk-YOUR_OPENCODE_GO_API_KEY" # 可选（单 key 兑底，v0.3.0+）
       # v0.4.0+ 多 key：list 优先于单 key 字段，每 key 独立账号独立配额窗口
