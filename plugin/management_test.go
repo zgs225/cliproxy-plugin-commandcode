@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -74,8 +75,8 @@ func TestHandleManagement_QuotaResource(t *testing.T) {
 		if !strings.Contains(bodyStr, "用量配额") {
 			t.Errorf("Body does not contain expected menu text 用量配额")
 		}
-		if !strings.Contains(bodyStr, "v0.4.4") {
-			t.Errorf("Body does not contain version badge v0.4.4")
+		if !strings.Contains(bodyStr, "v0.4.5") {
+			t.Errorf("Body does not contain version badge v0.4.5")
 		}
 	}
 }
@@ -175,6 +176,24 @@ const mockOpencodeUsageJSON = `{"usage":{
 	"monthly": {"status":"ok","percent":23,"resetsAt":"2026-10-14T09:13:49.000Z"}
 }}`
 
+// mockOpencodeUsageJSONFuture returns the same usage envelope but with reset
+// timestamps relative to now. The hardcoded dates in mockOpencodeUsageJSON
+// eventually fall into the past (weekly 2026-09-21 did), which makes
+// weekly.ResetInSeconds = 0 and breaks the `want > 0` assertion in
+// TestHandleManagement_OpencodeUsageRoute. Use this fixture for tests that
+// assert positive reset_in_seconds.
+func mockOpencodeUsageJSONFuture() string {
+	now := time.Now().UTC()
+	ts := func(d time.Duration) string {
+		return now.Add(d).Format("2006-01-02T15:04:05.000Z")
+	}
+	return fmt.Sprintf(`{"usage":{
+	"rolling": {"status":"ok","percent":4, "resetsAt":"%s"},
+	"weekly":  {"status":"ok","percent":46,"resetsAt":"%s"},
+	"monthly": {"status":"ok","percent":23,"resetsAt":"%s"}
+}}`, ts(2*time.Hour), ts(72*time.Hour), ts(30*24*time.Hour))
+}
+
 // Verifies that /plugins/commandcode/opencode/usage is matched by the dedicated
 // OpenCode handler and NOT swallowed by the generic "/usage" suffix match
 // (which would route it to the Command Code handler).
@@ -194,7 +213,7 @@ func TestHandleManagement_OpencodeUsageRoute(t *testing.T) {
 		}
 		sawAuthHeader = true
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(mockOpencodeUsageJSON))
+		_, _ = w.Write([]byte(mockOpencodeUsageJSONFuture()))
 	}))
 	defer ts.Close()
 
